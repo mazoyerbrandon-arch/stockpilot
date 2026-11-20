@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>StockPilot</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--bg:#0d0d0f;--card:#17171a;--card2:#1f1f23;--line:#2a2a30;--text:#f4f4f5;--muted:#9b9ba3;--accent:#ff7a1a;--warn:#f59e0b;--danger:#ef4444;--ok:#22c55e}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+.hidden{display:none!important}
+.center{min-height:100vh;display:grid;place-items:center;padding:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+.auth{width:100%;max-width:380px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand.big{font-size:22px;font-weight:700;margin-bottom:4px}
+.logo{width:36px;height:36px;flex-shrink:0;border-radius:10px;background:linear-gradient(135deg,var(--accent),#ff4d00);display:grid;place-items:center;font-weight:800;font-size:14px;color:#111}
+.top{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 16px 10px;background:rgba(13,13,15,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.cname{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crole{font-size:12px;color:var(--accent)}
+main{padding:14px 14px calc(90px + env(safe-area-inset-bottom));max-width:720px;margin:0 auto}
+.tabs{position:fixed;bottom:0;left:0;right:0;display:flex;background:rgba(18,18,21,.96);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+.tabs button{flex:1;background:none;border:0;padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--muted);font-size:11px}
+.tabs button.on{color:var(--accent)}
+.tabs svg{width:22px;height:22px}
+.icon-btn{background:var(--card2);border:1px solid var(--line);border-radius:10px;width:38px;height:38px;display:grid;place-items:center;flex-shrink:0;padding:0}
+.icon-btn svg{width:20px;height:20px}
+.icon-btn.danger{color:var(--danger);width:32px;height:32px}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0}
+input,select{display:block;width:100%;margin-top:6px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px;outline:none;-webkit-appearance:none;appearance:none}
+input:focus,select:focus{border-color:var(--accent)}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:13px;font-weight:600;margin-top:10px}
+.btn.primary{background:var(--accent);color:#111}
+.btn.ghost{background:var(--card2);border:1px solid var(--line)}
+.btn.danger{background:var(--danger);color:#fff}
+.btn.danger.ghost{background:transparent;color:var(--danger);border:1px solid rgba(239,68,68,.4)}
+.btn.sm{width:auto;padding:10px 14px;margin-top:0;white-space:nowrap}
+.btn:disabled{opacity:.5}
+.link{background:none;border:0;color:var(--accent);padding:8px 0;font-weight:600}
+.muted{color:var(--muted)}.small{font-size:13px}.pad{padding:8px 0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row>.btn{flex:1}
+.row input,.row select{margin-top:0}
+form.row input,form.row select{flex:1;min-width:0;width:auto}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.kpi .v{font-size:26px;font-weight:800}.kpi .l{font-size:12px;color:var(--muted)}
+.kpi.warn .v{color:var(--warn)}
+.sec-h{display:flex;justify-content:space-between;align-items:center;gap:8px}
+h2,h3,h4{margin:0 0 8px}h3{font-size:16px}h4{margin:16px 0 4px;font-size:14px;color:var(--muted)}
+.list{display:flex;flex-direction:column}
+.list.card{padding:4px 14px}
+.item{display:flex;align-items:center;gap:12px;padding:12px 0;border:0;border-bottom:1px solid var(--line);background:none;text-align:left;width:100%}
+.item:last-child{border-bottom:0}
+.item.col{flex-direction:column;align-items:stretch;gap:4px}
+.item select{width:auto;margin:0;padding:8px 10px;font-size:14px}
+.grow{flex:1;min-width:0}
+.t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.col .t{white-space:normal}
+.s{font-size:12px;color:var(--muted)}
+.qty{font-size:18px;font-weight:800;min-width:44px;text-align:right}
+.qty.warn,.bigqty.warn{color:var(--warn)}
+.mv{min-width:52px;text-align:center;font-weight:800;border-radius:10px;padding:6px 4px;font-size:14px}
+.mv.in{background:rgba(34,197,94,.12);color:var(--ok)}.mv.out{background:rgba(255,122,26,.12);color:var(--accent)}
+.badge{font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--card2);border:1px solid var(--line);white-space:nowrap}
+.badge.warn{color:var(--warn);border-color:rgba(245,158,11,.4)}
+.badge.owner{color:var(--accent);border-color:rgba(255,122,26,.4)}
+.toolbar{display:flex;gap:8px;margin-bottom:10px}
+.toolbar input{flex:1;margin:0}
+.chips{display:flex;gap:8px;margin-bottom:10px;overflow-x:auto}
+.chip{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:13px;white-space:nowrap}
+.chip.on{background:var(--accent);color:#111;border-color:var(--accent);font-weight:700}
+.banner{background:rgba(245,158,11,.12);color:var(--warn);text-align:center;font-size:13px;padding:8px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--card);width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;padding:18px 16px calc(24px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+.bigqty{font-size:44px;font-weight:800;margin:6px 0 12px}.bigqty span{font-size:14px;color:var(--muted);font-weight:500;margin-left:8px}
+.inner{background:var(--card2)}
+.inner input{background:var(--card)}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg label{margin:0}
+.seg input{display:none}
+.seg span{display:block;text-align:center;padding:12px;border-radius:12px;border:1px solid var(--line);font-weight:700;color:var(--text)}
+.seg input:checked+span{background:var(--accent);color:#111;border-color:var(--accent)}
+.row-btn{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;text-align:left}
+.row-btn.on{border-color:var(--accent)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + env(safe-area-inset-bottom));background:#26262b;border:1px solid var(--line);padding:12px 16px;border-radius:12px;z-index:30;width:max-content;max-width:90vw;font-size:14px}
+.toast.bad{border-color:var(--danger);color:#fecaca}
+.spinner{width:32px;height:32px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+code{font-size:12px;word-break:break-all;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modal" class="modal hidden"><div class="sheet" id="sheet"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+// =====================================================================
+//  CONFIGURATION — à remplir (Supabase > Project Settings > API Keys)
+//  Utiliser la clé PUBLIQUE (anon / publishable). JAMAIS la clé secrète.
+// =====================================================================
+const SUPABASE_URL = 'https://jgtvnkjvbhhnwrafwwqx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_7OfbSN0swKXP1FjdLGPCDA_oYNP_r8c';
+// =====================================================================
+
+const $ = s => document.querySelector(s);
+const app = $('#app');
+const S = { user: null, isAdmin: false, memberships: [], company: null, role: null, tab: 'dash',
+  allProducts: [], products: [], members: [], moves: [], support: [], adminReqs: [], q: '', onlyLow: false, mf: 'all' };
+
+const ICON = {
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
+  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>',
+  swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16"/><path d="M3 8l4-4 4 4"/><path d="M17 20V4"/><path d="M21 16l-4 4-4-4"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M1 21c0-4 4-6 8-6s8 2 8 6"/><path d="M17 4a4 4 0 010 8"/><path d="M23 21c0-3-2-5-5-6"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>',
+  menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'
+};
+
+// ---------- Utilitaires ----------
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtDate = d => new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const roleLabel = r => ({ owner: 'Propriétaire', admin: 'Admin', member: 'Membre' }[r] || r);
+const canWrite = () => !!S.role;
+const isOwner = () => S.role === 'owner';
+const isManager = () => S.role === 'owner' || S.role === 'admin';
+const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+function toast(msg, bad) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad ? ' bad' : '');
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = 'toast hidden', 3500);
+}
+function errMsg(e) {
+  const m = e?.message || String(e);
+  if (/foreign key/i.test(m)) return 'Ce produit a un historique : archive-le plutôt que de le supprimer.';
+  if (/products_company_id_sku_key|duplicate key/i.test(m)) return 'Ce SKU existe déjà dans ton entreprise.';
+  if (/Invalid login credentials/i.test(m)) return 'E-mail ou mot de passe incorrect.';
+  if (/Email not confirmed/i.test(m)) return 'Confirme ton e-mail avant de te connecter.';
+  if (/Failed to fetch|NetworkError/i.test(m)) return 'Connexion impossible. Vérifie ton réseau.';
+  return m;
+}
+function must(res) { if (res.error) throw res.error; return res.data; }
+async function run(fn, okMsg) {
+  try { await fn(); if (okMsg) toast(okMsg); return true; }
+  catch (e) { toast(errMsg(e), true); return false; }
+}
+
+function openModal(html) { $('#sheet').innerHTML = html; $('#modal').classList.remove('hidden'); }
+function closeModal() { $('#modal').classList.add('hidden'); $('#sheet').innerHTML = ''; }
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+
+// ---------- Démarrage ----------
+let sb = null;
+if (SUPABASE_URL.includes('VOTRE-PROJET') || SUPABASE_KEY.includes('VOTRE_CLE')) {
+  app.innerHTML = '<div class="center"><div class="card auth"><h2>Configuration manquante</h2><p class="muted">Renseigne SUPABASE_URL et SUPABASE_KEY en haut du fichier index.html.</p></div></div>';
+} else {
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  sb.auth.onAuthStateChange((_event, session) => {
+    const prev = S.user?.id;
+    S.user = session?.user || null;
+    if (!S.user || S.user.id !== prev) setTimeout(boot, 0);
+  });
+}
+
+async function boot() {
+  closeModal();
+  if (!S.user) return renderAuth('login');
+  app.innerHTML = '<div class="center"><div class="spinner"></div></div>';
+  const ok = await run(async () => {
+    S.isAdmin = must(await sb.rpc('is_platform_admin'));
+    S.memberships = must(await sb.from('company_members')
+      .select('role, company_id, companies(id, name)').eq('user_id', S.user.id));
+  });
+  if (!ok) {
+    app.innerHTML = '<div class="center"><div class="card auth"><h2>Erreur de chargement</h2><button class="btn primary" onclick="boot()">Réessayer</button><button class="link" onclick="logout()">Se déconnecter</button></div></div>';
+    return;
+  }
+  if (!S.memberships.length) return S.isAdmin ? openApp(null) : renderCreateCompany(true);
+  const saved = ls.get('sp_company');
+  const m = S.memberships.find(x => x.company_id === saved) || S.memberships[0];
+  await openApp(m.company_id);
+}
+
+async function openApp(companyId, tab) {
+  try {
+    if (companyId) {
+      const m = S.memberships.find(x => x.company_id === companyId);
+      let company = m?.companies;
+      if (!company) {
+        company = must(await sb.from('companies').select('id, name').eq('id', companyId).maybeSingle());
+        if (!company) throw new Error('Accès indisponible (demande non acceptée ou expirée).');
+      }
+      S.company = { ...company };
+      S.role = m?.role || null;
+      if (m) ls.set('sp_company', companyId);
+    } else { S.company = null; S.role = null; }
+    S.tab = tab || (S.company ? 'dash' : 'admin');
+    S.q = ''; S.onlyLow = false; S.mf = 'all';
+    await loadData();
+    render();
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+async function loadData() {
+  const jobs = [];
+  if (S.company) {
+    const cid = S.company.id;
+    jobs.push(
+      sb.from('products').select('*').eq('company_id', cid).order('name')
+        .then(r => { S.allProducts = must(r); S.products = S.allProducts.filter(p => !p.archived); }),
+      sb.rpc('get_company_members', { p_company: cid }).then(r => { S.members = must(r) || []; }),
+      sb.from('stock_movements').select('*').eq('company_id', cid).order('created_at', { ascending: false }).limit(200)
+        .then(r => { S.moves = must(r); }),
+      sb.from('support_access').select('*').eq('company_id', cid).order('created_at', { ascending: false }).limit(50)
+        .then(r => { S.support = must(r); })
+    );
+  } else { S.allProducts = []; S.products = []; S.members = []; S.moves = []; S.support = []; }
+  if (S.isAdmin) {
+    jobs.push(sb.from('support_access').select('*').eq('admin_id', S.user.id).order('created_at', { ascending: false }).limit(50)
+      .then(r => { S.adminReqs = must(r); }));
+  }
+  await Promise.all(jobs);
+}
+
+async function refresh() { await run(loadData); render(); }
+
+// ---------- Écrans hors application ----------
+function renderAuth(mode) {
+  const login = mode === 'login';
+  app.innerHTML = `<div class="center"><div class="card auth">
+    <div class="brand big"><span class="logo">SP</span><span>StockPilot</span></div>
+    <p class="muted">${login ? 'Connecte-toi à ton espace' : 'Crée ton compte'}</p>
+    <form id="f">
+      <label>E-mail<input name="email" type="email" required autocomplete="email"></label>
+      <label>Mot de passe<input name="password" type="password" required minlength="6" autocomplete="${login ? 'current-password' : 'new-password'}"></label>
+      <button class="btn primary" type="submit">${login ? 'Se connecter' : 'Créer mon compte'}</button>
+    </form>
+    <button class="link" onclick="renderAuth('${login ? 'signup' : 'login'}')">${login ? 'Pas encore de compte ? Inscription' : 'Déjà un compte ? Connexion'}</button>
+  </div></div>`;
+  $('#f').onsubmit = async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target), email = fd.get('email').trim(), password = fd.get('password');
+    const btn = e.target.querySelector('button'); btn.disabled = true;
+    await run(async () => {
+      if (login) must(await sb.auth.signInWithPassword({ email, password }));
+      else {
+        const d = must(await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } }));
+        if (!d.session) { toast('Compte créé : confirme ton e-mail, puis connecte-toi.'); renderAuth('login'); }
+      }
+    });
+    btn.disabled = false;
+  };
+}
+
+function renderCreateCompany(first) {
+  app.innerHTML = `<div class="center"><div class="card auth">
+    <div class="brand big"><span class="logo">SP</span><span>${first ? 'Bienvenue' : 'Nouvelle entreprise'}</span></div>
+    <p class="muted">Crée ton entreprise. Tu en seras le propriétaire.</p>
+    <form id="f"><label>Nom de l’entreprise<input name="name" required minlength="2" maxlength="100"></label>
+    <button class="btn primary">Créer</button></form>
+    ${first
+      ? '<p class="muted small">Tu as été invité par une entreprise ? Demande à ton responsable de t’ajouter avec ton e-mail, puis recharge la page.</p><button class="link" onclick="logout()">Se déconnecter</button>'
+      : '<button class="link" onclick="boot()">Annuler</button>'}
+  </div></div>`;
+  $('#f').onsubmit = async e => {
+    e.preventDefault();
+    const name = new FormData(e.target).get('name').trim();
+    let id;
+    if (await run(async () => { id = must(await sb.rpc('create_company', { p_name: name })); }, 'Entreprise créée')) {
+      ls.set('sp_company', id); boot();
+    }
+  };
+}
+
+async function logout() { closeModal(); ls.set('sp_company', ''); await sb.auth.signOut(); }
+
+// ---------- Coque de l'application ----------
+function render() {
+  const tabs = [];
+  if (S.company) tabs.push(['dash', 'Accueil', ICON.home], ['products', 'Produits', ICON.box], ['moves', 'Mouvements', ICON.swap], ['team', 'Équipe', ICON.users]);
+  if (S.isAdmin) tabs.push(['admin', 'Admin', ICON.shield]);
+  if (!tabs.find(t => t[0] === S.tab)) S.tab = tabs[0][0];
+  const sub = S.company ? (S.role ? roleLabel(S.role) : 'Support · lecture seule') : 'Super Admin';
+  app.innerHTML = `
+    <header class="top">
+      <div class="brand"><span class="logo">SP</span><div style="min-width:0"><div class="cname">${esc(S.company?.name || 'StockPilot')}</div><div class="crole">${sub}</div></div></div>
+      <button class="icon-btn" onclick="openMenu()" aria-label="Menu">${ICON.menu}</button>
+    </header>
+    ${S.company && !S.role ? '<div class="banner">Mode support : lecture seule</div>' : ''}
+    <main>${VIEWS[S.tab]()}</main>
+    <nav class="tabs">${tabs.map(([k, l, i]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="go('${k}')">${i}<span>${l}</span></button>`).join('')}</nav>`;
+}
+function go(t) { S.tab = t; render(); window.scrollTo(0, 0); }
+
+function openMenu() {
+  openModal(`<div class="sec-h"><h3>Mes entreprises</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
+    ${S.memberships.map(m => `<button class="row-btn ${S.company?.id === m.company_id ? 'on' : ''}" onclick="closeModal();openApp('${m.company_id}')"><span class="t">${esc(m.companies?.name)}</span><span class="badge ${m.role}">${roleLabel(m.role)}</span></button>`).join('') || '<p class="muted">Aucune entreprise.</p>'}
+    ${S.isAdmin ? '<button class="row-btn" onclick="closeModal();openApp(null)"><span class="t">Espace Super Admin</span><span class="badge owner">Admin</span></button>' : ''}
+    <button class="btn ghost" onclick="closeModal();renderCreateCompany(false)">+ Créer une entreprise</button>
+    <p class="muted small">Connecté : ${esc(S.user.email)}</p>
+    <button class="btn danger ghost" onclick="logout()">Se déconnecter</button>`);
+}
+
+// ---------- Composants ----------
+const kpi = (l, v, cls = '') => `<div class="kpi ${cls}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+const who = id => id === S.user.id ? 'Vous' : (S.members.find(x => x.user_id === id)?.email || 'Ancien membre');
+
+function productRow(p) {
+  const low = p.quantity <= p.min_stock;
+  return `<button class="item" onclick="openProduct('${p.id}')">
+    <div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${p.sku ? 'SKU ' + esc(p.sku) + ' · ' : ''}seuil ${p.min_stock}</div></div>
+    <div class="qty ${low ? 'warn' : ''}">${p.quantity}</div></button>`;
+}
+function moveRow(m) {
+  const p = S.allProducts.find(x => x.id === m.product_id), inn = m.type === 'in';
+  return `<div class="item"><div class="mv ${inn ? 'in' : 'out'}">${inn ? '+' : '−'}${m.quantity}</div>
+    <div class="grow"><div class="t">${esc(p?.name || 'Produit')}</div>
+    <div class="s">${fmtDate(m.created_at)} · ${esc(who(m.user_id))}${m.note ? ' · ' + esc(m.note) : ''}</div></div>
+    <div class="s">→ ${m.quantity_after}</div></div>`;
+}
+function supportRow(s, asAdmin) {
+  const active = s.status === 'approved' && new Date(s.expires_at) > new Date();
+  const st = s.status === 'approved' ? (active ? 'Actif jusqu’à ' + fmtDate(s.expires_at) : 'Expiré')
+    : ({ pending: 'En attente', rejected: 'Refusé', revoked: 'Coupé' }[s.status]);
+  let actions = '';
+  if (!asAdmin && s.status === 'pending' && isOwner())
+    actions += `<button class="btn primary sm" onclick="respondSupport('${s.id}',true)">Accepter</button><button class="btn ghost sm" onclick="respondSupport('${s.id}',false)">Refuser</button>`;
+  if (asAdmin && active) actions += `<button class="btn primary sm" onclick="openApp('${s.company_id}')">Ouvrir</button>`;
+  if (s.status === 'pending' || active) actions += `<button class="btn danger ghost sm" onclick="revokeSupport('${s.id}')">Couper</button>`;
+  return `<div class="item col"><div class="t">${esc(s.reason)}</div>
+    <div class="s">${asAdmin ? 'Entreprise <code>' + esc(s.company_id) + '</code><br>' : ''}${fmtDate(s.created_at)} · ${s.duration_hours} h · ${st}</div>
+    ${actions ? `<div class="row" style="margin-top:6px">${actions}</div>` : ''}</div>`;
+}
+
+// ---------- Vues ----------
+const VIEWS = {};
+
+VIEWS.dash = () => {
+  const low = S.products.filter(p => p.quantity <= p.min_stock);
+  const units = S.products.reduce((a, p) => a + p.quantity, 0);
+  const today = new Date().toDateString();
+  const movesToday = S.moves.filter(m => new Date(m.created_at).toDateString() === today).length;
+  return `<div class="kpis">
+      ${kpi('Produits', S.products.length)}${kpi('Unités en stock', units.toLocaleString('fr-FR'))}
+      ${kpi('Alertes', low.length, low.length ? 'warn' : '')}${kpi('Mouvements du jour', movesToday)}
+    </div>
+    <section class="card"><div class="sec-h"><h3>Alertes de stock</h3>${low.length ? `<span class="badge warn">${low.length}</span>` : ''}</div>
+      ${low.length ? `<div class="list">${low.map(productRow).join('')}</div>` : '<p class="muted">Aucun produit sous son seuil.</p>'}</section>
+    <section class="card"><div class="sec-h"><h3>Derniers mouvements</h3><button class="link" onclick="go('moves')">Tout voir</button></div>
+      ${S.moves.length ? `<div class="list">${S.moves.slice(0, 6).map(moveRow).join('')}</div>` : '<p class="muted">Aucun mouvement pour l’instant.</p>'}</section>`;
+};
+
+VIEWS.products = () => `
+  <div class="toolbar"><input id="q" placeholder="Rechercher nom ou SKU…" oninput="filterProducts()" value="${esc(S.q)}">
+    ${canWrite() ? '<button class="btn primary sm" onclick="productForm(null)">+ Produit</button>' : ''}</div>
+  <div class="chips">
+    <button class="chip ${!S.onlyLow ? 'on' : ''}" onclick="S.onlyLow=false;render()">Tous (${S.products.length})</button>
+    <button class="chip ${S.onlyLow ? 'on' : ''}" onclick="S.onlyLow=true;render()">En alerte</button>
+    <button class="chip" onclick="exportCsv()">Exporter CSV</button>
+  </div>
+  <div id="plist" class="list card">${productListHtml()}</div>`;
+
+function productListHtml() {
+  const q = S.q.toLowerCase();
+  const list = S.products.filter(p => (!S.onlyLow || p.quantity <= p.min_stock)
+    && (!q || p.name.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q)));
+  return list.length ? list.map(productRow).join('')
+    : `<p class="muted pad">${S.products.length ? 'Aucun résultat.' : 'Aucun produit. Ajoute ton premier produit.'}</p>`;
+}
+function filterProducts() { S.q = $('#q').value; $('#plist').innerHTML = productListHtml(); }
+
+VIEWS.moves = () => {
+  const list = S.moves.filter(m => S.mf === 'all' || m.type === S.mf);
+  return `<div class="chips">
+      ${[['all', 'Tous'], ['in', 'Entrées'], ['out', 'Sorties']].map(([k, l]) => `<button class="chip ${S.mf === k ? 'on' : ''}" onclick="S.mf='${k}';render()">${l}</button>`).join('')}
+      <button class="chip" onclick="refresh()">↻ Actualiser</button></div>
+    <div class="list card">${list.length ? list.map(moveRow).join('') : '<p class="muted pad">Aucun mouvement.</p>'}</div>
+    ${S.moves.length >= 200 ? '<p class="muted small">Les 200 derniers mouvements sont affichés.</p>' : ''}`;
+};
+
+VIEWS.team = () => {
+  const me = S.user.id;
+  const roleOpts = r => ['admin', 'member'].map(x => `<option value="${x}" ${x === r ? 'selected' : ''}>${roleLabel(x)}</option>`).join('');
+  const others = S.members.filter(m => m.role !== 'owner');
+  return `
+  ${isOwner() ? `<section class="card"><h3>Entreprise</h3>
+    <form class="row" onsubmit="event.preventDefault();renameCompany(this)"><input name="name" value="${esc(S.company.name)}" required minlength="2" maxlength="100"><button class="btn primary sm">Renommer</button></form>
+    <p class="muted small" style="margin-bottom:0">ID (à donner au support) : <code>${esc(S.company.id)}</code></p></section>` : ''}
+
+  <section class="card"><div class="sec-h"><h3>Membres</h3><span class="badge">${S.members.length}</span></div>
+    <div class="list">${S.members.map(m => `
+      <div class="item"><div class="grow"><div class="t">${esc(m.email)}${m.user_id === me ? ' <span class="muted">(vous)</span>' : ''}</div>
+        <div class="s">Depuis le ${new Date(m.created_at).toLocaleDateString('fr-FR')}</div></div>
+        ${isOwner() && m.role !== 'owner'
+          ? `<select onchange="changeRole('${m.user_id}', this.value)">${roleOpts(m.role)}</select>`
+          : `<span class="badge ${m.role}">${roleLabel(m.role)}</span>`}
+        ${canWrite() && m.role !== 'owner' && (m.user_id === me || isOwner() || (S.role === 'admin' && m.role === 'member'))
+          ? `<button class="icon-btn danger" aria-label="Retirer" onclick="removeMember('${m.user_id}')">✕</button>` : ''}
+      </div>`).join('')}</div></section>
+
+  ${isManager() ? `<section class="card"><h3>Ajouter un employé</h3>
+    <p class="muted small">L’employé doit d’abord créer son compte StockPilot avec cet e-mail.</p>
+    <form onsubmit="event.preventDefault();addMember(this)">
+      <label>E-mail<input name="email" type="email" required></label>
+      ${isOwner() ? `<label>Rôle<select name="role">${roleOpts('member')}</select></label>` : '<input type="hidden" name="role" value="member">'}
+      <button class="btn primary">Ajouter</button></form></section>` : ''}
+
+  ${isOwner() ? `<section class="card"><h3>Accès support</h3>
+    <p class="muted small">Le support StockPilot ne voit tes données qu’avec ton accord, en lecture seule et pour une durée limitée.</p>
+    ${S.support.length ? `<div class="list">${S.support.map(s => supportRow(s, false)).join('')}</div>` : '<p class="muted">Aucune demande.</p>'}</section>` : ''}
+
+  ${isOwner() && others.length ? `<section class="card"><h3>Transférer la propriété</h3>
+    <p class="muted small">Tu deviendras admin.</p>
+    <form class="row" onsubmit="event.preventDefault();transferOwnership(this)">
+      <select name="user">${others.map(m => `<option value="${m.user_id}">${esc(m.email)}</option>`).join('')}</select>
+      <button class="btn danger sm">Transférer</button></form></section>` : ''}
+
+  <section class="card"><h3>Rôles</h3><p class="muted small" style="margin:0">
+    <b>Propriétaire</b> : tout, y compris l’entreprise, les rôles et l’accès support.<br>
+    <b>Admin</b> : stock + ajout et retrait des membres.<br>
+    <b>Membre</b> : produits et mouvements de stock.</p></section>`;
+};
+
+VIEWS.admin = () => `
+  <section class="card"><h3>Demander un accès support</h3>
+    <p class="muted small">L’owner de l’entreprise doit accepter. Accès en lecture seule, limité dans le temps.</p>
+    <form onsubmit="event.preventDefault();requestSupport(this)">
+      <label>ID de l’entreprise<input name="company" required pattern="[0-9a-fA-F\\-]{36}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label>
+      <label>Motif<input name="reason" required minlength="5" maxlength="500"></label>
+      <label>Durée<select name="hours"><option value="1">1 h</option><option value="2" selected>2 h</option><option value="8">8 h</option><option value="24">24 h</option><option value="72">72 h</option></select></label>
+      <button class="btn primary">Envoyer la demande</button></form></section>
+  <section class="card"><div class="sec-h"><h3>Mes demandes</h3><button class="link" onclick="refresh()">↻</button></div>
+    ${S.adminReqs.length ? `<div class="list">${S.adminReqs.map(s => supportRow(s, true)).join('')}</div>` : '<p class="muted">Aucune demande.</p>'}</section>`;
+
+// ---------- Produit ----------
+function openProduct(id) {
+  const p = S.allProducts.find(x => x.id === id); if (!p) return;
+  const low = p.quantity <= p.min_stock;
+  const hist = S.moves.filter(m => m.product_id === id).slice(0, 15);
+  openModal(`<div class="sec-h"><h3>${esc(p.name)}</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
+    <p class="muted" style="margin:0">${p.sku ? 'SKU ' + esc(p.sku) + ' · ' : ''}Seuil d’alerte ${p.min_stock}</p>
+    <div class="bigqty ${low ? 'warn' : ''}">${p.quantity}<span>en stock</span></div>
+    ${canWrite() && !p.archived ? `
+      <form id="mf" class="card inner">
+        <div class="seg"><label><input type="radio" name="type" value="in" checked><span>+ Entrée</span></label><label><input type="radio" name="type" value="out"><span>− Sortie</span></label></div>
+        <label>Quantité<input name="qty" type="number" min="1" step="1" required inputmode="numeric"></label>
+        <label>Note (optionnel)<input name="note" maxlength="500" placeholder="Ex : livraison fournisseur, commande 123"></label>
+        <button class="btn primary">Valider le mouvement</button>
+      </form>
+      <div class="row">
+        <button class="btn ghost" onclick="productForm('${p.id}')">Modifier</button>
+        <button class="btn ghost" onclick="archiveProduct('${p.id}')">Archiver</button>
+        <button class="btn danger ghost" onclick="deleteProduct('${p.id}')">Supprimer</button>
+      </div>` : ''}
+    <h4>Historique</h4>
+    ${hist.length ? `<div class="list">${hist.map(moveRow).join('')}</div>` : '<p class="muted">Aucun mouvement.</p>'}`);
+  const f = $('#mf');
+  if (f) f.onsubmit = async e => {
+    e.preventDefault();
+    const fd = new FormData(f), btn = f.querySelector('.btn'); btn.disabled = true;
+    const ok = await run(async () => must(await sb.rpc('record_stock_movement', {
+      p_product_id: id, p_type: fd.get('type'), p_quantity: parseInt(fd.get('qty'), 10), p_note: fd.get('note').trim() || null
+    })), 'Mouvement enregistré');
+    btn.disabled = false;
+    if (ok) { await refresh(); openProduct(id); }
+  };
+}
+
+function productForm(id) {
+  const p = id ? S.allProducts.find(x => x.id === id) : null;
+  openModal(`<div class="sec-h"><h3>${p ? 'Modifier le produit' : 'Nouveau produit'}</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
+    <form id="pf">
+      <label>Nom<input name="name" required maxlength="200" value="${esc(p?.name)}"></label>
+      <label>SKU / Référence (optionnel)<input name="sku" maxlength="100" value="${esc(p?.sku)}"></label>
+      <label>Seuil d’alerte<input name="min_stock" type="number" min="0" step="1" inputmode="numeric" value="${p?.min_stock ?? 0}"></label>
+      ${p ? '' : '<p class="muted small">Le stock démarre à 0 : fais ensuite une entrée pour ajouter des quantités.</p>'}
+      <button class="btn primary">Enregistrer</button>
+    </form>`);
+  $('#pf').onsubmit = async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const row = { name: fd.get('name').trim(), sku: fd.get('sku').trim() || null, min_stock: parseInt(fd.get('min_stock') || '0', 10) };
+    const ok = await run(async () => {
+      if (p) must(await sb.from('products').update(row).eq('id', p.id));
+      else must(await sb.from('products').insert({ ...row, company_id: S.company.id }));
+    }, p ? 'Produit modifié' : 'Produit ajouté');
+    if (ok) { closeModal(); await refresh(); if (p) openProduct(p.id); }
+  };
+}
+
+async function archiveProduct(id) {
+  if (!confirm('Archiver ce produit ? Il disparaît de la liste, son historique est conservé.')) return;
+  if (await run(async () => must(await sb.from('products').update({ archived: true }).eq('id', id)), 'Produit archivé')) { closeModal(); refresh(); }
+}
+async function deleteProduct(id) {
+  if (!confirm('Supprimer définitivement ce produit ?')) return;
+  if (await run(async () => must(await sb.from('products').delete().eq('id', id)), 'Produit supprimé')) { closeModal(); refresh(); }
+}
+function exportCsv() {
+  const rows = [['Nom', 'SKU', 'Quantité', 'Seuil', 'Alerte']]
+    .concat(S.products.map(p => [p.name, p.sku || '', p.quantity, p.min_stock, p.quantity <= p.min_stock ? 'OUI' : '']));
+  const csv = '﻿' + rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'stock-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---------- Équipe & support ----------
+async function renameCompany(f) {
+  const name = new FormData(f).get('name').trim();
+  if (await run(async () => must(await sb.from('companies').update({ name }).eq('id', S.company.id)), 'Entreprise renommée')) {
+    S.company.name = name;
+    const m = S.memberships.find(x => x.company_id === S.company.id); if (m?.companies) m.companies.name = name;
+    render();
+  }
+}
+async function addMember(f) {
+  const fd = new FormData(f);
+  if (await run(async () => must(await sb.rpc('add_company_member', { p_company: S.company.id, p_email: fd.get('email').trim(), p_role: fd.get('role') })), 'Employé ajouté')) refresh();
+}
+async function changeRole(uid, role) {
+  await run(async () => must(await sb.rpc('change_member_role', { p_company: S.company.id, p_user: uid, p_role: role })), 'Rôle modifié');
+  refresh();
+}
+async function removeMember(uid) {
+  const self = uid === S.user.id;
+  if (!confirm(self ? 'Quitter cette entreprise ?' : 'Retirer ce membre ?')) return;
+  if (await run(async () => must(await sb.rpc('remove_company_member', { p_company: S.company.id, p_user: uid })), self ? 'Tu as quitté l’entreprise' : 'Membre retiré')) {
+    if (self) { ls.set('sp_company', ''); boot(); } else refresh();
+  }
+}
+async function transferOwnership(f) {
+  const uid = new FormData(f).get('user');
+  if (!confirm('Transférer la propriété ? Tu deviendras admin.')) return;
+  if (await run(async () => must(await sb.rpc('transfer_ownership', { p_company: S.company.id, p_new_owner: uid })), 'Propriété transférée')) boot();
+}
+async function respondSupport(id, approve) {
+  if (await run(async () => must(await sb.rpc('respond_support_access', { p_request: id, p_approve: approve })), approve ? 'Accès accordé' : 'Demande refusée')) refresh();
+}
+async function revokeSupport(id) {
+  if (await run(async () => must(await sb.rpc('revoke_support_access', { p_request: id })), 'Accès coupé')) refresh();
+}
+async function requestSupport(f) {
+  const fd = new FormData(f);
+  if (await run(async () => must(await sb.rpc('request_support_access', {
+    p_company: fd.get('company').trim(), p_reason: fd.get('reason').trim(), p_hours: parseInt(fd.get('hours'), 10)
+  })), 'Demande envoyée')) { f.reset(); refresh(); }
+}
+</script>
+</body>
+</html>
