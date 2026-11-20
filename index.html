@@ -94,12 +94,30 @@ h2,h3,h4{margin:0 0 8px}h3{font-size:16px}h4{margin:16px 0 4px;font-size:14px;co
 .spinner{width:32px;height:32px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 code{font-size:12px;word-break:break-all;color:var(--muted)}
+.lbl{font-size:13px;color:var(--muted);margin:10px 0 6px}
+input[type=file]{padding:10px;font-size:14px}
+.ok{color:var(--ok)}.err{color:var(--danger)}
+#reader{width:100%;border-radius:14px;overflow:hidden;background:#000;min-height:260px}
+#reader video{object-fit:cover}
+.qrbox{background:#fff;border-radius:16px;padding:16px;display:grid;place-items:center;margin:8px 0}
+.qrbox svg{width:220px;height:220px}
+.top-actions{display:flex;gap:8px}
+#print{display:none}
+@media print{
+  body{background:#fff;color:#000}
+  #app,#modal,#toast{display:none!important}
+  #print{display:grid!important;grid-template-columns:repeat(3,1fr);gap:6mm;padding:6mm}
+  .label{border:1px dashed #999;border-radius:3mm;padding:3mm;text-align:center;break-inside:avoid;font:11px/1.3 -apple-system,Arial,sans-serif;color:#000}
+  .label svg{width:32mm;height:32mm}
+  .label b{display:block;font-size:12px;margin-top:1mm}
+}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="modal" class="modal hidden"><div class="sheet" id="sheet"></div></div>
 <div id="toast" class="toast hidden"></div>
+<div id="print"></div>
 
 <script>
 // =====================================================================
@@ -121,6 +139,7 @@ const ICON = {
   swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16"/><path d="M3 8l4-4 4 4"/><path d="M17 20V4"/><path d="M21 16l-4 4-4-4"/></svg>',
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M1 21c0-4 4-6 8-6s8 2 8 6"/><path d="M17 4a4 4 0 010 8"/><path d="M23 21c0-3-2-5-5-6"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>',
+  scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 8V5a2 2 0 012-2h3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M8 21H5a2 2 0 01-2-2v-3"/><path d="M7 12h10"/></svg>',
   menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'
 };
 
@@ -153,7 +172,7 @@ async function run(fn, okMsg) {
 }
 
 function openModal(html) { $('#sheet').innerHTML = html; $('#modal').classList.remove('hidden'); }
-function closeModal() { $('#modal').classList.add('hidden'); $('#sheet').innerHTML = ''; }
+function closeModal() { stopScan(); S.scanCb = null; $('#modal').classList.add('hidden'); $('#sheet').innerHTML = ''; }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
 // ---------- Démarrage ----------
@@ -176,7 +195,7 @@ async function boot() {
   const ok = await run(async () => {
     S.isAdmin = must(await sb.rpc('is_platform_admin'));
     S.memberships = must(await sb.from('company_members')
-      .select('role, company_id, companies(id, name)').eq('user_id', S.user.id));
+      .select('role, company_id, companies(id, name, siret, address, naf)').eq('user_id', S.user.id));
   });
   if (!ok) {
     app.innerHTML = '<div class="center"><div class="card auth"><h2>Erreur de chargement</h2><button class="btn primary" onclick="boot()">Réessayer</button><button class="link" onclick="logout()">Se déconnecter</button></div></div>';
@@ -194,7 +213,7 @@ async function openApp(companyId, tab) {
       const m = S.memberships.find(x => x.company_id === companyId);
       let company = m?.companies;
       if (!company) {
-        company = must(await sb.from('companies').select('id, name').eq('id', companyId).maybeSingle());
+        company = must(await sb.from('companies').select('id, name, siret, address, naf').eq('id', companyId).maybeSingle());
         if (!company) throw new Error('Accès indisponible (demande non acceptée ou expirée).');
       }
       S.company = { ...company };
@@ -263,20 +282,69 @@ function renderCreateCompany(first) {
   app.innerHTML = `<div class="center"><div class="card auth">
     <div class="brand big"><span class="logo">SP</span><span>${first ? 'Bienvenue' : 'Nouvelle entreprise'}</span></div>
     <p class="muted">Crée ton entreprise. Tu en seras le propriétaire.</p>
-    <form id="f"><label>Nom de l’entreprise<input name="name" required minlength="2" maxlength="100"></label>
-    <button class="btn primary">Créer</button></form>
+    <form id="f">
+      <div class="lbl">SIRET (optionnel : remplit la fiche automatiquement)</div>
+      <div class="row"><input name="siret" inputmode="numeric" maxlength="17" placeholder="14 chiffres" style="flex:1;min-width:0;width:auto"><button type="button" class="btn ghost sm" id="sirBtn">Rechercher</button></div>
+      <div id="sirInfo" class="muted small" style="margin-top:8px"></div>
+      <label>Nom de l’entreprise<input name="name" required minlength="2" maxlength="100"></label>
+      <button class="btn primary">Créer</button></form>
     ${first
       ? '<p class="muted small">Tu as été invité par une entreprise ? Demande à ton responsable de t’ajouter avec ton e-mail, puis recharge la page.</p><button class="link" onclick="logout()">Se déconnecter</button>'
       : '<button class="link" onclick="boot()">Annuler</button>'}
   </div></div>`;
-  $('#f').onsubmit = async e => {
+  const f = $('#f');
+  let found = null;
+  $('#sirBtn').onclick = async () => { found = await lookupSiret(f.siret.value, $('#sirInfo')); if (found) f.name.value = found.name.slice(0, 100); };
+  f.onsubmit = async e => {
     e.preventDefault();
-    const name = new FormData(e.target).get('name').trim();
+    const digits = f.siret.value.replace(/\D/g, '');
     let id;
-    if (await run(async () => { id = must(await sb.rpc('create_company', { p_name: name })); }, 'Entreprise créée')) {
-      ls.set('sp_company', id); boot();
-    }
+    if (await run(async () => {
+      id = must(await sb.rpc('create_company', {
+        p_name: f.name.value.trim(),
+        p_siret: found?.siret || (digits.length === 14 ? digits : null),
+        p_address: found?.address || null, p_naf: found?.naf || null
+      }));
+    }, 'Entreprise créée')) { ls.set('sp_company', id); boot(); }
   };
+}
+
+// ---------- SIRET (annuaire des entreprises, API publique de l'État) ----------
+async function lookupSiret(raw, out) {
+  const s = String(raw).replace(/\D/g, '');
+  if (s.length !== 14 && s.length !== 9) { out.innerHTML = '<span class="err">Saisis un SIRET (14 chiffres) ou un SIREN (9 chiffres).</span>'; return null; }
+  out.textContent = 'Recherche…';
+  try {
+    const r = await fetch('https://recherche-entreprises.api.gouv.fr/search?q=' + s + '&page=1&per_page=1');
+    if (!r.ok) throw new Error();
+    const e = (await r.json()).results?.[0];
+    if (!e) { out.innerHTML = '<span class="err">Aucune entreprise trouvée pour ce numéro.</span>'; return null; }
+    const et = (e.matching_etablissements || []).find(x => x.siret === s) || e.siege || {};
+    const res = {
+      siret: s.length === 14 ? s : (e.siege?.siret || null),
+      name: e.nom_complet || e.nom_raison_sociale || '',
+      address: et.adresse || e.siege?.adresse || '',
+      naf: et.activite_principale || e.activite_principale || ''
+    };
+    out.innerHTML = `<span class="ok">✓ ${esc(res.name)}</span><br>${esc(res.address)}${res.naf ? ' · NAF ' + esc(res.naf) : ''}`;
+    return res;
+  } catch { out.innerHTML = '<span class="err">Recherche indisponible pour le moment. Saisis le nom à la main.</span>'; return null; }
+}
+async function siretFill(f) {
+  const res = await lookupSiret(f.siret.value, $('#sirInfo2'));
+  if (res) { S.sirFound = res; f.name.value = res.name.slice(0, 100); f.siret.value = res.siret || f.siret.value; }
+}
+async function saveCompany(f) {
+  const digits = f.siret.value.replace(/\D/g, '');
+  if (digits && digits.length !== 14) return toast('Le SIRET doit contenir 14 chiffres.', true);
+  const fd = S.sirFound && S.sirFound.siret === digits ? S.sirFound : null;
+  const row = { name: f.name.value.trim(), siret: digits || null,
+    address: fd ? fd.address : (digits ? S.company.address : null), naf: fd ? fd.naf : (digits ? S.company.naf : null) };
+  if (await run(async () => must(await sb.from('companies').update(row).eq('id', S.company.id)), 'Entreprise enregistrée')) {
+    Object.assign(S.company, row);
+    const m = S.memberships.find(x => x.company_id === S.company.id); if (m?.companies) Object.assign(m.companies, row);
+    S.sirFound = null; render();
+  }
 }
 
 async function logout() { closeModal(); ls.set('sp_company', ''); await sb.auth.signOut(); }
@@ -291,7 +359,7 @@ function render() {
   app.innerHTML = `
     <header class="top">
       <div class="brand"><span class="logo">SP</span><div style="min-width:0"><div class="cname">${esc(S.company?.name || 'StockPilot')}</div><div class="crole">${sub}</div></div></div>
-      <button class="icon-btn" onclick="openMenu()" aria-label="Menu">${ICON.menu}</button>
+      <div class="top-actions">${S.company ? `<button class="icon-btn" onclick="scanProduct()" aria-label="Scanner">${ICON.scan}</button>` : ''}<button class="icon-btn" onclick="openMenu()" aria-label="Menu">${ICON.menu}</button></div>
     </header>
     ${S.company && !S.role ? '<div class="banner">Mode support : lecture seule</div>' : ''}
     <main>${VIEWS[S.tab]()}</main>
@@ -347,7 +415,8 @@ VIEWS.dash = () => {
   const units = S.products.reduce((a, p) => a + p.quantity, 0);
   const today = new Date().toDateString();
   const movesToday = S.moves.filter(m => new Date(m.created_at).toDateString() === today).length;
-  return `<div class="kpis">
+  return `${canWrite() ? '<div class="row" style="margin-bottom:12px"><button class="btn primary" style="margin:0" onclick="quickScan()">⚡ Scan rapide</button><button class="btn ghost" style="margin:0" onclick="scanProduct()">📷 Trouver un produit</button></div>' : ''}
+  <div class="kpis">
       ${kpi('Produits', S.products.length)}${kpi('Unités en stock', units.toLocaleString('fr-FR'))}
       ${kpi('Alertes', low.length, low.length ? 'warn' : '')}${kpi('Mouvements du jour', movesToday)}
     </div>
@@ -358,11 +427,15 @@ VIEWS.dash = () => {
 };
 
 VIEWS.products = () => `
-  <div class="toolbar"><input id="q" placeholder="Rechercher nom ou SKU…" oninput="filterProducts()" value="${esc(S.q)}">
+  <div class="toolbar"><input id="q" placeholder="Rechercher ou scanner un code…" oninput="filterProducts()" onkeydown="if(event.key==='Enter'){const p=findByCode(this.value);if(p&&!p.archived){this.blur();openProduct(p.id,true);}}" value="${esc(S.q)}">
     ${canWrite() ? '<button class="btn primary sm" onclick="productForm(null)">+ Produit</button>' : ''}</div>
   <div class="chips">
     <button class="chip ${!S.onlyLow ? 'on' : ''}" onclick="S.onlyLow=false;render()">Tous (${S.products.length})</button>
     <button class="chip ${S.onlyLow ? 'on' : ''}" onclick="S.onlyLow=true;render()">En alerte</button>
+    <button class="chip" onclick="scanProduct()">📷 Scanner</button>
+    ${canWrite() ? '<button class="chip" onclick="quickScan()">⚡ Scan rapide (PDA)</button>' : ''}
+    ${canWrite() ? '<button class="chip" onclick="openImport()">Importer Excel/CSV</button>' : ''}
+    <button class="chip" onclick="printLabels()">Étiquettes QR</button>
     <button class="chip" onclick="exportCsv()">Exporter CSV</button>
   </div>
   <div id="plist" class="list card">${productListHtml()}</div>`;
@@ -391,8 +464,15 @@ VIEWS.team = () => {
   const others = S.members.filter(m => m.role !== 'owner');
   return `
   ${isOwner() ? `<section class="card"><h3>Entreprise</h3>
-    <form class="row" onsubmit="event.preventDefault();renameCompany(this)"><input name="name" value="${esc(S.company.name)}" required minlength="2" maxlength="100"><button class="btn primary sm">Renommer</button></form>
-    <p class="muted small" style="margin-bottom:0">ID (à donner au support) : <code>${esc(S.company.id)}</code></p></section>` : ''}
+    <form onsubmit="event.preventDefault();saveCompany(this)">
+      <label>Nom<input name="name" value="${esc(S.company.name)}" required minlength="2" maxlength="100"></label>
+      <div class="lbl">SIRET</div>
+      <div class="row"><input name="siret" value="${esc(S.company.siret)}" inputmode="numeric" maxlength="17" placeholder="14 chiffres" style="flex:1;min-width:0;width:auto"><button type="button" class="btn ghost sm" onclick="siretFill(this.form)">Rechercher</button></div>
+      <div id="sirInfo2" class="muted small" style="margin-top:8px">${S.company.address ? esc(S.company.address) : ''}${S.company.naf ? ' · NAF ' + esc(S.company.naf) : ''}</div>
+      <button class="btn primary">Enregistrer</button>
+    </form>
+    <p class="muted small" style="margin-bottom:0">ID (à donner au support) : <code>${esc(S.company.id)}</code></p></section>`
+  : `<section class="card"><h3>${esc(S.company.name)}</h3><p class="muted small" style="margin:0">${S.company.siret ? 'SIRET ' + esc(S.company.siret) + '<br>' : ''}${esc(S.company.address || '')}</p></section>`}
 
   <section class="card"><div class="sec-h"><h3>Membres</h3><span class="badge">${S.members.length}</span></div>
     <div class="list">${S.members.map(m => `
@@ -440,13 +520,14 @@ VIEWS.admin = () => `
     ${S.adminReqs.length ? `<div class="list">${S.adminReqs.map(s => supportRow(s, true)).join('')}</div>` : '<p class="muted">Aucune demande.</p>'}</section>`;
 
 // ---------- Produit ----------
-function openProduct(id) {
+function openProduct(id, focusQty) {
   const p = S.allProducts.find(x => x.id === id); if (!p) return;
   const low = p.quantity <= p.min_stock;
   const hist = S.moves.filter(m => m.product_id === id).slice(0, 15);
   openModal(`<div class="sec-h"><h3>${esc(p.name)}</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
     <p class="muted" style="margin:0">${p.sku ? 'SKU ' + esc(p.sku) + ' · ' : ''}Seuil d’alerte ${p.min_stock}</p>
     <div class="bigqty ${low ? 'warn' : ''}">${p.quantity}<span>en stock</span></div>
+    <button class="btn ghost" style="margin:0 0 12px" onclick="showQr('${p.id}')">QR code / étiquette</button>
     ${canWrite() && !p.archived ? `
       <form id="mf" class="card inner">
         <div class="seg"><label><input type="radio" name="type" value="in" checked><span>+ Entrée</span></label><label><input type="radio" name="type" value="out"><span>− Sortie</span></label></div>
@@ -471,19 +552,27 @@ function openProduct(id) {
     btn.disabled = false;
     if (ok) { await refresh(); openProduct(id); }
   };
+  if (f && focusQty) setTimeout(() => f.qty.focus(), 300);
 }
 
-function productForm(id) {
+function productForm(id, draft) {
   const p = id ? S.allProducts.find(x => x.id === id) : null;
+  const v = draft || { name: p?.name || '', sku: p?.sku || '', min_stock: p?.min_stock ?? 0 };
   openModal(`<div class="sec-h"><h3>${p ? 'Modifier le produit' : 'Nouveau produit'}</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
     <form id="pf">
-      <label>Nom<input name="name" required maxlength="200" value="${esc(p?.name)}"></label>
-      <label>SKU / Référence (optionnel)<input name="sku" maxlength="100" value="${esc(p?.sku)}"></label>
-      <label>Seuil d’alerte<input name="min_stock" type="number" min="0" step="1" inputmode="numeric" value="${p?.min_stock ?? 0}"></label>
+      <label>Nom<input name="name" required maxlength="200" value="${esc(v.name)}"></label>
+      <div class="lbl">Référence / code-barres (optionnel)</div>
+      <div class="row"><input name="sku" maxlength="100" value="${esc(v.sku)}" style="flex:1;min-width:0;width:auto"><button type="button" class="btn ghost sm" id="skuScan">📷 Scanner</button></div>
+      <label>Seuil d’alerte<input name="min_stock" type="number" min="0" step="1" inputmode="numeric" value="${v.min_stock}"></label>
       ${p ? '' : '<p class="muted small">Le stock démarre à 0 : fais ensuite une entrée pour ajouter des quantités.</p>'}
       <button class="btn primary">Enregistrer</button>
     </form>`);
-  $('#pf').onsubmit = async e => {
+  const pf = $('#pf');
+  $('#skuScan').onclick = () => {
+    const d = { name: pf.name.value, sku: pf.sku.value, min_stock: pf.min_stock.value };
+    openScanner('Scanner le code-barres du produit', code => productForm(id, { ...d, sku: code }), () => productForm(id, d));
+  };
+  pf.onsubmit = async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const row = { name: fd.get('name').trim(), sku: fd.get('sku').trim() || null, min_stock: parseInt(fd.get('min_stock') || '0', 10) };
@@ -506,11 +595,284 @@ async function deleteProduct(id) {
 function exportCsv() {
   const rows = [['Nom', 'SKU', 'Quantité', 'Seuil', 'Alerte']]
     .concat(S.products.map(p => [p.name, p.sku || '', p.quantity, p.min_stock, p.quantity <= p.min_stock ? 'OUI' : '']));
-  const csv = '﻿' + rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\n');
+  downloadCsv('stock-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
+}
+function downloadCsv(filename, rows) {
+  const csv = '﻿' + rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = 'stock-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---------- Chargement de bibliothèques à la demande ----------
+const libs = {};
+function loadLib(url, globalName) {
+  if (window[globalName]) return Promise.resolve();
+  return libs[url] ||= new Promise((ok, ko) => {
+    const s = document.createElement('script'); s.src = url;
+    s.onload = ok; s.onerror = () => { delete libs[url]; ko(new Error('Chargement impossible. Vérifie ta connexion et réessaie.')); };
+    document.head.appendChild(s);
+  });
+}
+
+// ---------- Import Excel / CSV ----------
+const IMP_FIELDS = [
+  ['name', 'Nom du produit', true, ['nom', 'designation', 'produit', 'article', 'libelle', 'name', 'intitule', 'description']],
+  ['sku', 'Référence / code-barres', false, ['sku', 'reference', 'ref', 'code article', 'code', 'ean', 'code barre', 'code barres', 'gencod']],
+  ['quantity', 'Quantité en stock', false, ['quantite', 'qte', 'stock', 'quantity', 'qty', 'stock actuel', 'quantite en stock']],
+  ['min_stock', 'Seuil d’alerte', false, ['seuil', 'seuil d alerte', 'seuil alerte', 'stock min', 'stock minimum', 'stock mini', 'minimum', 'min', 'min stock', 'alerte']]
+];
+const norm = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const toInt = v => { const n = parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')); return Number.isFinite(n) && n > 0 ? Math.round(n) : 0; };
+
+function openImport() {
+  S.imp = null;
+  openModal(`<div class="sec-h"><h3>Importer des produits</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
+    <p class="muted small">Fichier Excel (.xlsx) ou CSV, avec une ligne d’en-têtes puis une ligne par produit. Colonnes reconnues : Nom, Référence, Quantité, Seuil.</p>
+    <button class="btn ghost" onclick="downloadCsv('modele-import-stockpilot.csv',[['Nom','Référence','Quantité','Seuil'],['Carton 40x30','CART-4030',120,20],['Ruban adhésif 50mm','RUB-50',48,10]])">Télécharger un modèle</button>
+    <label>Ton fichier<input type="file" id="impFile" accept=".csv,.xlsx,.xls,.txt,text/csv"></label>
+    <div id="impBody"></div>`);
+  $('#impFile').onchange = e => readImport(e.target.files[0]);
+}
+
+async function readImport(file) {
+  if (!file) return;
+  const body = $('#impBody'); body.innerHTML = '<p class="muted">Lecture du fichier…</p>';
+  try {
+    let rows;
+    if (/\.xlsx?$/i.test(file.name)) {
+      await loadLib('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', 'XLSX');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+    } else rows = parseCsv(decodeText(await file.arrayBuffer()));
+    rows = rows.map(r => r.map(c => String(c ?? '').trim())).filter(r => r.some(Boolean));
+    if (rows.length < 2) throw new Error('Le fichier doit contenir une ligne d’en-têtes et au moins un produit.');
+    S.imp = { headers: rows[0], data: rows.slice(1), map: guessMap(rows[0]) };
+    renderImport();
+  } catch (e) { body.innerHTML = `<p class="err">${esc(errMsg(e))}</p>`; }
+}
+
+function decodeText(buf) {
+  let t = new TextDecoder('utf-8').decode(buf);
+  if (t.includes('�')) { try { t = new TextDecoder('windows-1252').decode(buf); } catch {} }
+  return t.replace(/^﻿/, '');
+}
+
+function parseCsv(text) {
+  const first = text.split(/\r?\n/)[0] || '';
+  const sep = [';', '\t', ','].map(c => [c, first.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === sep) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+function guessMap(headers) {
+  const h = headers.map(norm), map = {}, used = new Set();
+  for (const [k, , , keys] of IMP_FIELDS) {            // 1er passage : correspondance exacte
+    const i = h.findIndex((x, j) => !used.has(j) && keys.includes(x));
+    map[k] = i; if (i >= 0) used.add(i);
+  }
+  for (const [k, , , keys] of IMP_FIELDS) {            // 2e passage : correspondance partielle
+    if (map[k] >= 0) continue;
+    const i = h.findIndex((x, j) => !used.has(j) && keys.some(w => x.startsWith(w + ' ') || x.endsWith(' ' + w)));
+    map[k] = i; if (i >= 0) used.add(i);
+  }
+  return map;
+}
+
+function impRows() {
+  const { data, map } = S.imp, g = (r, k) => (map[k] >= 0 ? r[map[k]] ?? '' : '');
+  return data.map(r => ({ name: String(g(r, 'name')).trim(), sku: String(g(r, 'sku')).trim(), quantity: toInt(g(r, 'quantity')), min_stock: toInt(g(r, 'min_stock')) }))
+    .filter(r => r.name);
+}
+
+function renderImport() {
+  const { headers, map } = S.imp, rows = impRows(), n = rows.length, pl = n > 1 ? 's' : '';
+  const opts = sel => '<option value="-1">— Aucune —</option>' + headers.map((h, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${esc(h || 'Colonne ' + (i + 1))}</option>`).join('');
+  $('#impBody').innerHTML = `<h4>Correspondance des colonnes</h4>
+    ${IMP_FIELDS.map(([k, l, req]) => `<label>${l}${req ? ' *' : ''}<select onchange="S.imp.map.${k}=+this.value;renderImport()">${opts(map[k])}</select></label>`).join('')}
+    <h4>Aperçu : ${n} produit${pl}</h4>
+    ${n ? `<div class="list">${rows.slice(0, 5).map(r => `<div class="item"><div class="grow"><div class="t">${esc(r.name)}</div><div class="s">${r.sku ? esc(r.sku) + ' · ' : ''}seuil ${r.min_stock}</div></div><div class="qty">${r.quantity}</div></div>`).join('')}</div>
+      ${n > 5 ? `<p class="muted small">… et ${n - 5} autre${n - 5 > 1 ? 's' : ''}.</p>` : ''}` : '<p class="err">Choisis la colonne qui contient le nom du produit.</p>'}
+    <p class="muted small">Si la référence existe déjà, le produit est mis à jour. Chaque écart de stock est enregistré comme mouvement « Import fichier ».</p>
+    <button class="btn primary" id="impGo" ${n ? '' : 'disabled'} onclick="runImport()">Importer ${n} produit${pl}</button>`;
+}
+
+async function runImport() {
+  const rows = impRows();
+  if (!rows.length) return;
+  if (rows.length > 5000) return toast('5000 produits maximum par import.', true);
+  const btn = $('#impGo'); btn.disabled = true;
+  let created = 0, updated = 0;
+  const ok = await run(async () => {
+    for (let i = 0; i < rows.length; i += 500) {
+      btn.textContent = `Import en cours… ${Math.min(i + 500, rows.length)}/${rows.length}`;
+      const r = must(await sb.rpc('import_products', { p_company: S.company.id, p_rows: rows.slice(i, i + 500) }));
+      created += r.created; updated += r.updated;
+    }
+  });
+  if (ok) { toast(`Import terminé : ${created} créé${created > 1 ? 's' : ''}, ${updated} mis à jour`); S.imp = null; closeModal(); await refresh(); }
+  else { btn.disabled = false; btn.textContent = 'Réessayer l’import'; await refresh(); }
+}
+
+// ---------- Scan QR code / code-barres (caméra, PDA, douchette) ----------
+let scanner = null;
+function stopScan() {
+  const s = scanner; scanner = null;
+  if (s) { try { s.stop().then(() => s.clear()).catch(() => {}); } catch {} }
+}
+async function startCamera(onText) {
+  await loadLib('https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js', 'Html5Qrcode');
+  if (!$('#reader')) return;
+  const s = new Html5Qrcode('reader');
+  scanner = s;
+  await s.start({ facingMode: 'environment' },
+    { fps: 10, qrbox: (w, h) => { const m = Math.floor(Math.min(w, h) * 0.8); return { width: m, height: Math.floor(m * 0.75) }; } },
+    text => onText(String(text).trim()), () => {});
+  if (scanner !== s) { try { await s.stop(); s.clear(); } catch {} }
+}
+const camError = e => `<span class="err">Caméra indisponible${/Permission|NotAllowed/i.test(String(e?.name || e)) ? ' : autorise l’accès à la caméra dans les réglages du navigateur' : ''}. Tu peux saisir le code à la main.</span>`;
+
+async function openScanner(title, onCode, onCancel) {
+  openModal(`<div class="sec-h"><h3>${esc(title)}</h3><button class="icon-btn" id="scanX">✕</button></div>
+    <p class="muted small">Vise le QR code StockPilot ou le code-barres du produit. Avec un PDA, appuie simplement sur la gâchette.</p>
+    <div id="reader"></div>
+    <p id="scanMsg" class="muted small"></p>
+    <div class="lbl">Ou saisis le code à la main</div>
+    <form id="scanF" class="row"><input name="code" autocomplete="off" autocapitalize="off" spellcheck="false" style="flex:1;min-width:0;width:auto"><button class="btn primary sm">OK</button></form>`);
+  let done = false;
+  const finish = code => { if (done || !code) return; done = true; S.scanCb = null; stopScan(); onCode(code); };
+  S.scanCb = finish;
+  $('#scanX').onclick = () => { done = true; S.scanCb = null; stopScan(); onCancel ? onCancel() : closeModal(); };
+  $('#scanF').onsubmit = e => { e.preventDefault(); finish(e.target.code.value.trim()); };
+  try { await startCamera(finish); } catch (e) { const m = $('#scanMsg'); if (m) m.innerHTML = camError(e); }
+}
+
+function findByCode(code) {
+  const c = String(code).trim(), id = c.startsWith('SP:') ? c.slice(3) : null;
+  return S.allProducts.find(p => (id && p.id === id) || (p.sku && p.sku.toLowerCase() === c.toLowerCase()));
+}
+function onScannedCode(code) {
+  const p = findByCode(code);
+  if (p && !p.archived) return openProduct(p.id, true);
+  if (p) { toast('Ce produit est archivé.', true); return closeModal(); }
+  if (code.startsWith('SP:')) { toast('QR code inconnu dans cette entreprise.', true); return closeModal(); }
+  if (canWrite()) { toast('Code inconnu : crée le produit.'); return productForm(null, { name: '', sku: code, min_stock: 0 }); }
+  toast('Aucun produit avec le code ' + code, true); closeModal();
+}
+function scanProduct() { if (S.company) openScanner('Scanner un produit', onScannedCode); }
+
+// Mode « Scan rapide » : chaque scan enregistre un mouvement immédiatement (idéal PDA / douchette)
+function quickScan() {
+  if (!canWrite()) return toast('Accès en lecture seule.', true);
+  S.qs ||= { type: 'out', qty: 1, log: [] };
+  openModal(`<div class="sec-h"><h3>Scan rapide</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
+    <p class="muted small">PDA, douchette ou caméra : chaque code scanné enregistre le mouvement tout de suite.</p>
+    <div class="seg">
+      <label><input type="radio" name="qst" value="in" ${S.qs.type === 'in' ? 'checked' : ''} onchange="S.qs.type='in'"><span>+ Entrée</span></label>
+      <label><input type="radio" name="qst" value="out" ${S.qs.type === 'out' ? 'checked' : ''} onchange="S.qs.type='out'"><span>− Sortie</span></label>
+    </div>
+    <label>Quantité par scan<input id="qsQty" type="number" min="1" step="1" inputmode="numeric" value="${S.qs.qty}" onchange="S.qs.qty=Math.max(1,parseInt(this.value,10)||1);this.value=S.qs.qty;this.blur()"></label>
+    <form id="qsF"><label>Code (saisie manuelle)<input id="qsCode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tape un code puis Entrée"></label></form>
+    <button class="btn ghost" id="qsCam">📷 Utiliser la caméra</button>
+    <div id="reader" class="hidden" style="margin-top:10px"></div>
+    <h4>Derniers scans</h4>
+    <div id="qsLog" class="list">${qsLogHtml()}</div>`);
+  $('#qsF').onsubmit = e => { e.preventDefault(); const i = $('#qsCode'), c = i.value.trim(); i.value = ''; i.blur(); if (c) qsHandle(c); };
+  $('#qsCam').onclick = async () => {
+    $('#reader').classList.remove('hidden'); $('#qsCam').classList.add('hidden');
+    let last = '', t = 0;
+    try { await startCamera(text => { const now = Date.now(); if (text === last && now - t < 2500) return; last = text; t = now; qsHandle(text); }); }
+    catch (e) { $('#reader').outerHTML = `<p class="muted small">${camError(e)}</p>`; }
+  };
+}
+const qsLogHtml = () => (S.qs?.log || []).map(e => `<div class="item">
+    <div class="mv ${e.err ? '' : (e.delta[0] === '+' ? 'in' : 'out')}" ${e.err ? 'style="color:var(--danger);background:rgba(239,68,68,.12)"' : ''}>${e.err ? '✕' : e.delta}</div>
+    <div class="grow"><div class="t">${esc(e.name || e.code)}</div><div class="s">${e.err ? esc(e.err) : 'Stock : ' + e.after} · ${e.at.toLocaleTimeString('fr-FR')}</div></div></div>`).join('')
+  || '<p class="muted small">Aucun scan pour l’instant.</p>';
+
+let qsQueue = Promise.resolve();
+function qsHandle(code) { qsQueue = qsQueue.then(() => qsRecord(code)); }
+async function qsRecord(code) {
+  const p = findByCode(code), type = S.qs.type, qty = S.qs.qty;
+  const e = { code, at: new Date(), name: p?.name };
+  if (!p || p.archived) { e.err = p ? 'Produit archivé' : 'Code inconnu : ' + code; beep(false); }
+  else {
+    try {
+      e.after = must(await sb.rpc('record_stock_movement', { p_product_id: p.id, p_type: type, p_quantity: qty, p_note: 'Scan' }));
+      e.delta = (type === 'in' ? '+' : '−') + qty; p.quantity = e.after; beep(true);
+    } catch (err) { e.err = errMsg(err); beep(false); }
+  }
+  S.qs.log.unshift(e); S.qs.log = S.qs.log.slice(0, 30);
+  const l = $('#qsLog'); if (l) l.innerHTML = qsLogHtml();
+  clearTimeout(S.qsT); S.qsT = setTimeout(async () => { await run(loadData); render(); }, 1500);
+}
+
+let actx;
+function beep(ok) {
+  try { navigator.vibrate?.(ok ? 60 : [90, 60, 90]); } catch {}
+  try {
+    actx ||= new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = ok ? 1250 : 280; g.gain.value = 0.08;
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + (ok ? 0.08 : 0.3));
+  } catch {}
+}
+
+// Douchettes et PDA en mode « clavier » : ils tapent le code très vite puis Entrée
+const kb = { buf: '', last: 0 };
+document.addEventListener('keydown', e => {
+  if (!S.user || !S.company) return;
+  const t = e.target;
+  if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+  const now = Date.now();
+  if (now - kb.last > 100) kb.buf = '';
+  kb.last = now;
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    const code = kb.buf.trim(); kb.buf = '';
+    if (code.length < 3) return;
+    e.preventDefault();
+    if ($('#qsLog')) qsHandle(code);
+    else if (S.scanCb) S.scanCb(code);
+    else onScannedCode(code);
+  } else if (e.key.length === 1) kb.buf += e.key;
+});
+
+// ---------- QR codes et étiquettes ----------
+async function qrSvg(text) {
+  await loadLib('https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js', 'qrcode');
+  const q = qrcode(0, 'M'); q.addData(text); q.make();
+  return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+}
+async function showQr(id) {
+  const p = S.allProducts.find(x => x.id === id); if (!p) return;
+  try {
+    const svg = await qrSvg('SP:' + p.id);
+    openModal(`<div class="sec-h"><h3>${esc(p.name)}</h3><button class="icon-btn" onclick="openProduct('${p.id}')">✕</button></div>
+      <div class="qrbox">${svg}</div>
+      <p class="muted small">Colle cette étiquette sur l’emplacement ou le produit. En la scannant, l’appli ouvre directement la fiche. Si le produit a déjà un code-barres, mets-le en référence : il fonctionnera aussi au scan.</p>
+      <button class="btn primary" onclick="printLabels(['${p.id}'])">Imprimer l’étiquette</button>`);
+  } catch (e) { toast(errMsg(e), true); }
+}
+async function printLabels(ids) {
+  const list = ids ? S.allProducts.filter(p => ids.includes(p.id)) : S.products.filter(p => !S.onlyLow || p.quantity <= p.min_stock);
+  if (!list.length) return toast('Aucun produit à imprimer.', true);
+  if (list.length > 300) return toast('300 étiquettes maximum à la fois.', true);
+  try {
+    const parts = [];
+    for (const p of list) parts.push(`<div class="label">${await qrSvg('SP:' + p.id)}<b>${esc(p.name)}</b>${p.sku ? esc(p.sku) : ''}</div>`);
+    $('#print').innerHTML = parts.join('');
+    setTimeout(() => window.print(), 100);
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 // ---------- Équipe & support ----------
