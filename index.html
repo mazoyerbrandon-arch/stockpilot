@@ -33,7 +33,9 @@ main{padding:14px 14px calc(90px + env(safe-area-inset-bottom));max-width:720px;
 .icon-btn svg{width:20px;height:20px}
 .icon-btn.danger{color:var(--danger);width:32px;height:32px}
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0}
-input,select{display:block;width:100%;margin-top:6px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px;outline:none;-webkit-appearance:none;appearance:none}
+input,select,textarea{display:block;width:100%;margin-top:6px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px;outline:none;-webkit-appearance:none;appearance:none;font-family:inherit}
+input[type=checkbox]{-webkit-appearance:checkbox;appearance:auto;width:20px;height:20px;display:inline-block;margin:0;padding:0;accent-color:var(--accent)}
+input[type=date]{min-height:48px}
 input:focus,select:focus{border-color:var(--accent)}
 .btn{display:block;width:100%;border:0;border-radius:12px;padding:13px;font-weight:600;margin-top:10px}
 .btn.primary{background:var(--accent);color:#111}
@@ -103,6 +105,14 @@ input[type=file]{padding:10px;font-size:14px}
 .qrbox svg{width:220px;height:220px}
 .top-actions{display:flex;gap:8px}
 #print{display:none}
+.checks{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.chk{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:0;color:var(--text);font-size:14px}
+.thumb{width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0;background:var(--card2)}
+.pphoto{width:100%;max-height:260px;object-fit:cover;border-radius:14px;margin:8px 0;background:var(--card2)}
+.netbar{text-align:center;font-size:13px;padding:8px;background:rgba(239,68,68,.12);color:#fecaca}
+.netbar.sync{background:rgba(255,122,26,.12);color:var(--accent)}
+.netbar button{background:none;border:0;color:inherit;text-decoration:underline;font-weight:700}
+.dlc-x{color:var(--danger)}.dlc-s{color:var(--warn)}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .grid2 label{margin:10px 0}
 .bar{height:8px;border-radius:99px;background:var(--card2);overflow:hidden;margin-top:4px}
@@ -145,7 +155,7 @@ const $ = s => document.querySelector(s);
 const app = $('#app');
 const S = { user: null, isAdmin: false, memberships: [], company: null, role: null, tab: 'dash',
   allProducts: [], products: [], members: [], moves: [], support: [], adminReqs: [], q: '', onlyLow: false, mf: 'all',
-  locations: [], levels: [], suppliers: [], loc: '', pos: [], poLines: [], invs: [], invCounts: [], inv: null, stats: [], statsDays: 30, audit: [], poFilter: 'open' };
+  locations: [], levels: [], suppliers: [], loc: '', pos: [], poLines: [], invs: [], invCounts: [], inv: null, stats: [], statsDays: 30, audit: [], poFilter: 'open', lots: [], serials: [], photos: {}, offline: false };
 
 const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
@@ -208,11 +218,18 @@ async function boot() {
   closeModal();
   if (!S.user) return renderAuth('login');
   app.innerHTML = '<div class="center"><div class="spinner"></div></div>';
-  const ok = await run(async () => {
+  let ok = true;
+  try {
     S.isAdmin = must(await sb.rpc('is_platform_admin'));
     S.memberships = must(await sb.from('company_members')
       .select('role, company_id, companies(id, name, siret, address, naf)').eq('user_id', S.user.id));
-  });
+    ls.set('sp_boot_' + S.user.id, JSON.stringify({ isAdmin: S.isAdmin, memberships: S.memberships }));
+    S.offline = false;
+  } catch (e) {
+    let c = null; try { c = JSON.parse(ls.get('sp_boot_' + S.user.id) || 'null'); } catch {}
+    if (isNet(e) && c) { S.isAdmin = c.isAdmin; S.memberships = c.memberships; S.offline = true; }
+    else { ok = false; toast(errMsg(e), true); }
+  }
   if (!ok) {
     app.innerHTML = '<div class="center"><div class="card auth"><h2>Erreur de chargement</h2><button class="btn primary" onclick="boot()">Réessayer</button><button class="link" onclick="logout()">Se déconnecter</button></div></div>';
     return;
@@ -221,6 +238,7 @@ async function boot() {
   const saved = ls.get('sp_company');
   const m = S.memberships.find(x => x.company_id === saved) || S.memberships[0];
   await openApp(m.company_id);
+  if (Q.get().length) flushQueue();
 }
 
 async function openApp(companyId, tab) {
@@ -261,15 +279,46 @@ async function loadData() {
       sb.from('stock_levels').select('product_id, location_id, quantity').eq('company_id', cid)
         .then(r => { S.levels = must(r); }),
       sb.from('suppliers').select('*').eq('company_id', cid).order('name')
-        .then(r => { S.suppliers = must(r); })
+        .then(r => { S.suppliers = must(r); }),
+      sb.from('lots').select('*').eq('company_id', cid).gt('quantity', 0).order('expiry_date', { ascending: true, nullsFirst: false })
+        .then(r => { S.lots = must(r); }),
+      sb.from('serials').select('*').eq('company_id', cid).eq('status', 'in_stock').order('serial')
+        .then(r => { S.serials = must(r); })
     );
-  } else { S.allProducts = []; S.products = []; S.members = []; S.moves = []; S.support = []; S.locations = []; S.levels = []; S.suppliers = []; }
+  } else { S.allProducts = []; S.products = []; S.members = []; S.moves = []; S.support = []; S.locations = []; S.levels = []; S.suppliers = []; S.lots = []; S.serials = []; }
   if (S.isAdmin) {
     jobs.push(sb.from('support_access').select('*').eq('admin_id', S.user.id).order('created_at', { ascending: false }).limit(50)
       .then(r => { S.adminReqs = must(r); }));
   }
-  await Promise.all(jobs);
+  try {
+    await Promise.all(jobs);
+    S.offline = false;
+    if (S.company) { saveSnap(); await loadPhotos(); }
+  } catch (e) {
+    if (!(S.company && isNet(e) && loadSnap())) throw e;
+    S.offline = true;
+  }
   if (S.loc && !S.locations.some(l => l.id === S.loc && !l.archived)) S.loc = '';
+}
+const SNAP_KEYS = ['allProducts', 'members', 'moves', 'locations', 'levels', 'suppliers', 'lots', 'serials'];
+function saveSnap() {
+  const o = {}; SNAP_KEYS.forEach(k => o[k] = k === 'moves' ? S.moves.slice(0, 100) : S[k]);
+  ls.set('sp_snap_' + S.company.id, JSON.stringify(o));
+}
+function loadSnap() {
+  let o = null; try { o = JSON.parse(ls.get('sp_snap_' + S.company.id) || 'null'); } catch {}
+  if (!o) return false;
+  SNAP_KEYS.forEach(k => S[k] = o[k] || []);
+  S.products = S.allProducts.filter(p => !p.archived); S.support = []; S.photos = {};
+  return true;
+}
+async function loadPhotos() {
+  const paths = [...new Set(S.allProducts.map(p => p.photo_path).filter(Boolean))].filter(x => !S.photos[x]);
+  if (!paths.length) return;
+  try {
+    const { data } = await sb.storage.from('product-photos').createSignedUrls(paths, 6 * 3600);
+    (data || []).forEach(d => { if (d.signedUrl) S.photos[d.path] = d.signedUrl; });
+  } catch {}
 }
 
 async function refresh() {
@@ -391,6 +440,7 @@ function render() {
       <div class="top-actions">${S.company ? `<button class="icon-btn" onclick="scanProduct()" aria-label="Scanner">${ICON.scan}</button>` : ''}<button class="icon-btn" onclick="openMenu()" aria-label="Menu">${ICON.menu}</button></div>
     </header>
     ${S.company && !S.role ? '<div class="banner">Mode support : lecture seule</div>' : ''}
+    <div id="netbar">${netbarHtml()}</div>
     <main>${VIEWS[S.tab]()}</main>
     <nav class="tabs">${tabs.map(([k, l, i]) => `<button class="${navKey === k ? 'on' : ''}" onclick="go('${k}')">${i}<span>${l}</span></button>`).join('')}</nav>`;
 }
@@ -435,15 +485,17 @@ const who = id => id === S.user.id ? 'Vous' : (S.members.find(x => x.user_id ===
 
 function productRow(p) {
   const low = p.quantity <= p.min_stock, q = qtyIn(p);
-  return `<button class="item" onclick="openProduct('${p.id}')">
-    <div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${p.sku ? esc(p.sku) + ' · ' : ''}seuil ${p.min_stock}${p.purchase_price != null ? ' · ' + money(q * p.purchase_price) : ''}${S.loc ? ' · total ' + p.quantity : ''}</div></div>
+  const ph = p.photo_path && S.photos[p.photo_path];
+  const soon = p.tracking === 'lot' ? S.lots.filter(l => l.product_id === p.id && l.expiry_date).map(l => daysTo(l.expiry_date)).sort((a, b) => a - b)[0] : null;
+  return `<button class="item" onclick="openProduct('${p.id}')">${ph ? `<img class="thumb" src="${ph}" alt="" loading="lazy">` : ''}
+    <div class="grow"><div class="t">${esc(p.name)}${soon != null && soon <= 30 ? ` <span class="badge ${soon < 0 ? 'warn' : ''}">${soon < 0 ? 'Périmé' : 'DLC J-' + soon}</span>` : ''}</div><div class="s">${p.sku ? esc(p.sku) + ' · ' : ''}seuil ${p.min_stock}${p.purchase_price != null ? ' · ' + money(q * p.purchase_price) : ''}${S.loc ? ' · total ' + p.quantity : ''}</div></div>
     <div class="qty ${low ? 'warn' : ''}">${q}</div></button>`;
 }
 function moveRow(m) {
   const p = S.allProducts.find(x => x.id === m.product_id), inn = m.type === 'in';
   return `<div class="item"><div class="mv ${inn ? 'in' : 'out'}">${inn ? '+' : '−'}${m.quantity}</div>
     <div class="grow"><div class="t">${esc(p?.name || 'Produit')}</div>
-    <div class="s">${fmtDate(m.created_at)} · ${esc(who(m.user_id))}${multiLoc() && m.location_id ? ' · ' + esc(locName(m.location_id)) : ''}${m.note ? ' · ' + esc(m.note) : ''}</div></div>
+    <div class="s">${fmtDate(m.created_at)} · ${esc(who(m.user_id))}${multiLoc() && m.location_id ? ' · ' + esc(locName(m.location_id)) : ''}${m.lot_number ? ' · lot ' + esc(m.lot_number) : ''}${m.serials?.length ? ' · n° ' + esc(m.serials.join(', ')) : ''}${m.note ? ' · ' + esc(m.note) : ''}</div></div>
     <div class="s">→ ${m.quantity_after}</div></div>`;
 }
 function supportRow(s, asAdmin) {
@@ -475,6 +527,7 @@ VIEWS.dash = () => {
     </div>
     <section class="card"><div class="sec-h"><h3>Alertes de stock</h3>${low.length ? `<span class="badge warn">${low.length}</span>` : ''}</div>
       ${low.length ? `<div class="list">${low.map(productRow).join('')}</div>${canWrite() ? '<button class="btn ghost" onclick="poFromAlerts()">Commander les produits en alerte</button>' : ''}` : '<p class="muted">Aucun produit sous son seuil.</p>'}</section>
+    ${dlcHtml()}
     <section class="card"><div class="sec-h"><h3>Derniers mouvements</h3><button class="link" onclick="go('moves')">Tout voir</button></div>
       ${S.moves.length ? `<div class="list">${S.moves.slice(0, 6).map(moveRow).join('')}</div>` : '<p class="muted">Aucun mouvement pour l’instant.</p>'}</section>`;
 };
@@ -581,19 +634,24 @@ function openProduct(id, focusQty) {
   const hist = S.moves.filter(m => m.product_id === id).slice(0, 15);
   const locs = activeLocs(), multi = locs.length > 1;
   const curLoc = S.loc || defLoc();
+  const ph = p.photo_path && S.photos[p.photo_path];
+  const track = { lot: 'Suivi par lots + DLC', serial: 'Suivi par n° de série' }[p.tracking];
   openModal(`<div class="sec-h"><h3>${esc(p.name)}</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
-    <p class="muted" style="margin:0">${p.sku ? 'Réf. ' + esc(p.sku) + ' · ' : ''}Seuil d’alerte ${p.min_stock}${p.supplier_id ? ' · ' + esc(supName(p.supplier_id)) : ''}</p>
+    ${ph ? `<img class="pphoto" src="${ph}" alt="">` : ''}
+    <p class="muted" style="margin:0">${p.sku ? 'Réf. ' + esc(p.sku) + ' · ' : ''}Seuil d’alerte ${p.min_stock}${p.supplier_id ? ' · ' + esc(supName(p.supplier_id)) : ''}${track ? ' · ' + track : ''}</p>
     <div class="bigqty ${low ? 'warn' : ''}">${p.quantity}<span>en stock${p.purchase_price != null ? ' · ' + money(p.quantity * p.purchase_price) + ' (' + money(p.purchase_price) + '/u)' : ''}</span></div>
-    ${multi ? `<div class="list card inner" style="padding:2px 14px;margin-bottom:12px">${locs.map(l => `<div class="item" style="padding:8px 0"><div class="grow s">${esc(l.name)}</div><b>${levelOf(p.id, l.id)}</b></div>`).join('')}</div>` : ''}
+    ${multi && p.tracking === 'none' ? `<div class="list card inner" style="padding:2px 14px;margin-bottom:12px">${locs.map(l => `<div class="item" style="padding:8px 0"><div class="grow s">${esc(l.name)}</div><b>${levelOf(p.id, l.id)}</b></div>`).join('')}</div>` : ''}
+    ${p.tracking === 'lot' ? lotsHtml(p) : ''}${p.tracking === 'serial' ? serialsHtml(p) : ''}
     <div class="row" style="margin-bottom:12px">
       <button class="btn ghost" style="margin:0" onclick="showQr('${p.id}')">QR code</button>
+      ${canWrite() ? `<label class="btn ghost" style="margin:0;text-align:center;cursor:pointer">📷 Photo<input type="file" accept="image/*" style="display:none" onchange="uploadPhoto('${p.id}', this.files[0])"></label>` : ''}
       ${canWrite() && multi && !p.archived ? `<button class="btn ghost" style="margin:0" onclick="transferForm('${p.id}')">Transférer</button>` : ''}
     </div>
     ${canWrite() && !p.archived ? `
       <form id="mf" class="card inner">
-        <div class="seg"><label><input type="radio" name="type" value="in" checked><span>+ Entrée</span></label><label><input type="radio" name="type" value="out"><span>− Sortie</span></label></div>
-        ${multi ? `<label>Emplacement${locSelect('loc', curLoc)}</label>` : ''}
-        <label>Quantité<input name="qty" type="number" min="1" step="1" required inputmode="numeric"></label>
+        <div class="seg"><label><input type="radio" name="type" value="in" checked onchange="mvRefresh('${p.id}')"><span>+ Entrée</span></label><label><input type="radio" name="type" value="out" onchange="mvRefresh('${p.id}')"><span>− Sortie</span></label></div>
+        ${multi ? `<label>Emplacement${locSelect('loc', curLoc, { onchange: `mvRefresh('${p.id}')` })}</label>` : ''}
+        <div id="mvf">${mvFields(p, 'in', curLoc)}</div>
         <label>Note (optionnel)<input name="note" maxlength="500" placeholder="Ex : livraison fournisseur, commande 123"></label>
         <button class="btn primary">Valider le mouvement</button>
       </form>
@@ -607,15 +665,85 @@ function openProduct(id, focusQty) {
   const f = $('#mf');
   if (f) f.onsubmit = async e => {
     e.preventDefault();
-    const fd = new FormData(f), btn = f.querySelector('.btn'); btn.disabled = true;
-    const ok = await run(async () => must(await sb.rpc('record_stock_movement', {
-      p_product_id: id, p_type: fd.get('type'), p_quantity: parseInt(fd.get('qty'), 10), p_note: fd.get('note').trim() || null,
-      p_location_id: fd.get('loc') || defLoc(), p_source: 'manual'
-    })), 'Mouvement enregistré');
+    const fd = new FormData(f), type = fd.get('type'), loc = fd.get('loc') || defLoc();
+    let qty = parseInt(fd.get('qty'), 10), lot = null, expiry = null, serials = null;
+    if (p.tracking === 'lot') {
+      if (type === 'in') { lot = (fd.get('lot') || '').trim() || null; expiry = fd.get('expiry') || null; }
+      else if (fd.get('lotsel')) { [lot, expiry] = fd.get('lotsel').split('|'); expiry = expiry || null; }
+    }
+    if (p.tracking === 'serial') {
+      serials = type === 'in' ? splitSerials(fd.get('serials')) : fd.getAll('sn');
+      qty = serials.length;
+      if (!qty) return toast('Indique au moins un n° de série.', true);
+    }
+    if (!(qty > 0)) return toast('Quantité invalide.', true);
+    if (type === 'out' && S.offline && levelOf(p.id, loc) < qty) return toast('Stock insuffisant à cet emplacement.', true);
+    const btn = f.querySelector('.btn.primary'); btn.disabled = true;
+    let res;
+    const ok = await run(async () => {
+      res = await rpcOff('record_stock_movement', {
+        p_product_id: id, p_type: type, p_quantity: qty, p_note: fd.get('note').trim() || null,
+        p_location_id: loc, p_source: 'manual', p_lot: lot, p_expiry: expiry, p_serials: serials
+      }, `${type === 'in' ? '+' : '−'}${qty} ${p.name}`, p.tracking === 'serial' ? null : () => localMove(id, type, qty, loc));
+    });
     btn.disabled = false;
-    if (ok) { await refresh(); openProduct(id); }
+    if (!ok) return;
+    if (res.queued) { toast('Hors ligne : mouvement enregistré, il sera synchronisé.'); render(); return openProduct(id); }
+    toast('Mouvement enregistré'); await refresh(); openProduct(id);
   };
-  if (f && focusQty) setTimeout(() => f.qty.focus(), 300);
+  if (f && focusQty) setTimeout(() => f.qty?.focus(), 300);
+}
+
+// --- Lots, DLC et numéros de série
+const fmtDay = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR') : '';
+function daysTo(d) { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((new Date(d + 'T00:00:00') - t) / 864e5); }
+const dlcCls = d => { if (!d) return ''; const n = daysTo(d); return n < 0 ? 'dlc-x' : n <= 30 ? 'dlc-s' : ''; };
+const lotsOf = (pid, loc) => S.lots.filter(l => l.product_id === pid && (!loc || l.location_id === loc) && l.quantity > 0)
+  .sort((a, b) => (a.expiry_date || '9999') .localeCompare(b.expiry_date || '9999'));
+const serialsOf = (pid, loc) => S.serials.filter(x => x.product_id === pid && (!loc || x.location_id === loc));
+const splitSerials = v => [...new Set(String(v || '').split(/[\n,;]+/).map(x => x.trim()).filter(Boolean))];
+function lotsHtml(p) {
+  const ls_ = lotsOf(p.id);
+  return `<h4 style="margin-top:0">Lots en stock</h4>${ls_.length ? `<div class="list card inner" style="padding:2px 14px;margin-bottom:12px">${ls_.map(l => `<div class="item" style="padding:8px 0">
+    <div class="grow"><div class="t">${esc(l.lot_number)}</div><div class="s"><span class="${dlcCls(l.expiry_date)}">${l.expiry_date ? 'DLC ' + fmtDay(l.expiry_date) + (daysTo(l.expiry_date) < 0 ? ' (périmé)' : '') : 'Sans DLC'}</span>${multiLoc() ? ' · ' + esc(locName(l.location_id)) : ''}</div></div><b>${l.quantity}</b></div>`).join('')}</div>` : '<p class="muted small">Aucun lot en stock.</p>'}`;
+}
+function serialsHtml(p) {
+  const ss = serialsOf(p.id);
+  return `<h4 style="margin-top:0">N° de série en stock (${ss.length})</h4>${ss.length ? `<div class="checks">${ss.map(x => `<span class="chk">${esc(x.serial)}${multiLoc() ? ' · ' + esc(locName(x.location_id)) : ''}</span>`).join('')}</div>` : '<p class="muted small">Aucun n° de série en stock.</p>'}`;
+}
+function mvFields(p, type, loc) {
+  const qtyIn = `<label>Quantité<input name="qty" type="number" min="1" step="1" required inputmode="numeric"></label>`;
+  if (p.tracking === 'lot') {
+    if (type === 'in') return `<div class="grid2"><label>N° de lot<input name="lot" maxlength="100" placeholder="Ex : L2411" autocapitalize="characters"></label><label>DLC / DLUO<input name="expiry" type="date"></label></div>${qtyIn}`;
+    const ls_ = lotsOf(p.id, loc);
+    return `<label>Lot<select name="lotsel"><option value="">Automatique : DLC la plus proche d’abord</option>${ls_.map(l => `<option value="${esc(l.lot_number)}|${l.expiry_date || ''}">${esc(l.lot_number)}${l.expiry_date ? ' · DLC ' + fmtDay(l.expiry_date) : ''} · ${l.quantity}</option>`).join('')}</select></label>${qtyIn}`;
+  }
+  if (p.tracking === 'serial') {
+    if (type === 'in') return `<label>N° de série (un par ligne)<textarea name="serials" id="snIn" rows="3" autocapitalize="characters" spellcheck="false"></textarea></label>
+      <button type="button" class="btn ghost" id="snCamBtn" onclick="snCamera()">📷 Scanner les n° de série</button><div id="reader" class="hidden" style="margin-top:8px"></div>`;
+    const ss = serialsOf(p.id, loc);
+    return ss.length ? `<div class="lbl">N° de série à sortir</div><div class="checks">${ss.map(x => `<label class="chk"><input type="checkbox" name="sn" value="${esc(x.serial)}"> ${esc(x.serial)}</label>`).join('')}</div>`
+      : '<p class="muted small">Aucun n° de série en stock à cet emplacement.</p>';
+  }
+  return qtyIn;
+}
+function snAppend(code) {
+  const t = $('#snIn'); if (!t) return;
+  const list = splitSerials(t.value);
+  if (list.includes(code)) return beep(false);
+  t.value = list.concat(code).join('\n'); beep(true);
+}
+async function snCamera() {
+  $('#reader').classList.remove('hidden'); $('#snCamBtn').classList.add('hidden');
+  let last = '', t = 0;
+  try { await startCamera(text => { const now = Date.now(); if (text === last && now - t < 2500) return; last = text; t = now; snAppend(text); }); }
+  catch (e) { const r = $('#reader'); if (r) r.outerHTML = `<p class="muted small">${camError(e)}</p>`; }
+}
+function mvRefresh(id) {
+  const p = S.allProducts.find(x => x.id === id), f = $('#mf'); if (!p || !f) return;
+  const box = $('#mvf'), keep = box.querySelector('[name=qty]')?.value;
+  box.innerHTML = mvFields(p, f.querySelector('[name=type]:checked').value, f.loc?.value || defLoc());
+  if (keep && box.querySelector('[name=qty]')) box.querySelector('[name=qty]').value = keep;
 }
 
 function transferForm(id) {
@@ -626,25 +754,65 @@ function transferForm(id) {
   openModal(`<div class="sec-h"><h3>Transférer : ${esc(p.name)}</h3><button class="icon-btn" onclick="openProduct('${id}')">✕</button></div>
     <p class="muted small">${locs.map(l => esc(l.name) + ' : <b>' + levelOf(id, l.id) + '</b>').join(' · ')}</p>
     <form id="tf">
-      <label>Depuis${locSelect('from', from)}</label>
+      <label>Depuis${locSelect('from', from, { onchange: `trRefresh('${id}')` })}</label>
       <label>Vers${locSelect('to', to)}</label>
-      <label>Quantité<input name="qty" type="number" min="1" step="1" required inputmode="numeric"></label>
+      <div id="trf">${trFields(p, from)}</div>
       <button class="btn primary">Transférer</button>
     </form>`);
   $('#tf').onsubmit = async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
     if (fd.get('from') === fd.get('to')) return toast('Choisis deux emplacements différents.', true);
-    if (await run(async () => must(await sb.rpc('transfer_stock', { p_product_id: id, p_from: fd.get('from'), p_to: fd.get('to'), p_quantity: parseInt(fd.get('qty'), 10) })), 'Transfert enregistré')) {
+    let qty = parseInt(fd.get('qty'), 10), lot = null, expiry = null, serials = null;
+    if (p.tracking === 'lot' && fd.get('lotsel')) { [lot, expiry] = fd.get('lotsel').split('|'); expiry = expiry || null; }
+    if (p.tracking === 'serial') { serials = fd.getAll('sn'); qty = serials.length; if (!qty) return toast('Coche au moins un n° de série.', true); }
+    if (!(qty > 0)) return toast('Quantité invalide.', true);
+    if (await run(async () => must(await sb.rpc('transfer_stock', { p_product_id: id, p_from: fd.get('from'), p_to: fd.get('to'), p_quantity: qty, p_note: null, p_lot: lot, p_expiry: expiry, p_serials: serials })), 'Transfert enregistré')) {
       await refresh(); openProduct(id);
     }
   };
+}
+function trFields(p, from) {
+  if (p.tracking === 'serial') {
+    const ss = serialsOf(p.id, from);
+    return ss.length ? `<div class="lbl">N° de série à transférer</div><div class="checks">${ss.map(x => `<label class="chk"><input type="checkbox" name="sn" value="${esc(x.serial)}"> ${esc(x.serial)}</label>`).join('')}</div>` : '<p class="muted small">Aucun n° de série ici.</p>';
+  }
+  const q = `<label>Quantité<input name="qty" type="number" min="1" step="1" required inputmode="numeric"></label>`;
+  if (p.tracking === 'lot') return `<label>Lot<select name="lotsel"><option value="">Automatique : DLC la plus proche d’abord</option>${lotsOf(p.id, from).map(l => `<option value="${esc(l.lot_number)}|${l.expiry_date || ''}">${esc(l.lot_number)}${l.expiry_date ? ' · DLC ' + fmtDay(l.expiry_date) : ''} · ${l.quantity}</option>`).join('')}</select></label>${q}`;
+  return q;
+}
+function trRefresh(id) { const p = S.allProducts.find(x => x.id === id); $('#trf').innerHTML = trFields(p, $('#tf').from.value); }
+
+// --- Photos produits (compressées sur le téléphone avant envoi)
+function resizeImage(file, max, q) {
+  return new Promise((ok, ko) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const r = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * r); c.height = Math.round(img.height * r);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => b ? ok(b) : ko(new Error('Image illisible')), 'image/jpeg', q);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); ko(new Error('Format d’image non pris en charge')); };
+    img.src = url;
+  });
+}
+async function uploadPhoto(id, file) {
+  if (!file) return;
+  toast('Envoi de la photo…');
+  const p = S.allProducts.find(x => x.id === id), old = p?.photo_path;
+  if (await run(async () => {
+    const blob = await resizeImage(file, 1200, 0.82), path = `${S.company.id}/${id}/${Date.now()}.jpg`;
+    must(await sb.storage.from('product-photos').upload(path, blob, { contentType: 'image/jpeg' }));
+    must(await sb.from('products').update({ photo_path: path }).eq('id', id));
+    if (old) sb.storage.from('product-photos').remove([old]).catch(() => {});
+  }, 'Photo enregistrée')) { await refresh(); openProduct(id); }
 }
 
 function productForm(id, draft) {
   const p = id ? S.allProducts.find(x => x.id === id) : null;
   const v = draft || { name: p?.name || '', sku: p?.sku || '', min_stock: p?.min_stock ?? 0,
-    purchase_price: p?.purchase_price != null ? String(p.purchase_price).replace('.', ',') : '', supplier_id: p?.supplier_id || '', reorder_qty: p?.reorder_qty || 0 };
+    purchase_price: p?.purchase_price != null ? String(p.purchase_price).replace('.', ',') : '', supplier_id: p?.supplier_id || '', reorder_qty: p?.reorder_qty || 0, tracking: p?.tracking || 'none' };
   openModal(`<div class="sec-h"><h3>${p ? 'Modifier le produit' : 'Nouveau produit'}</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
     <form id="pf">
       <label>Nom<input name="name" required maxlength="200" value="${esc(v.name)}"></label>
@@ -656,11 +824,13 @@ function productForm(id, draft) {
       </div>
       <label>Fournisseur<select name="supplier_id"><option value="">— Aucun —</option>${S.suppliers.map(x => `<option value="${x.id}" ${x.id === v.supplier_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
       <label>Quantité à recommander (0 = automatique)<input name="reorder_qty" type="number" min="0" step="1" inputmode="numeric" value="${esc(v.reorder_qty)}"></label>
+      <label>Suivi du stock<select name="tracking">${[['none', 'Quantité simple'], ['lot', 'Lots + DLC (alimentaire, cosmétique, pharma…)'], ['serial', 'N° de série (outillage, matériel, électronique…)']].map(([k, l]) => `<option value="${k}" ${v.tracking === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${p && p.quantity > 0 ? '<p class="muted small" style="margin-top:-4px">Le suivi par n° de série ne peut être activé ou retiré que si le stock est à 0. Le passage en lots range le stock actuel dans un lot « SANS-LOT ».</p>' : ''}
       ${p ? '' : '<p class="muted small">Le stock démarre à 0 : fais ensuite une entrée pour ajouter des quantités.</p>'}
       <button class="btn primary">Enregistrer</button>
     </form>`);
   const pf = $('#pf');
-  const snap = () => ({ name: pf.elements.name.value, sku: pf.sku.value, min_stock: pf.min_stock.value, purchase_price: pf.purchase_price.value, supplier_id: pf.supplier_id.value, reorder_qty: pf.reorder_qty.value });
+  const snap = () => ({ name: pf.elements.name.value, sku: pf.sku.value, min_stock: pf.min_stock.value, purchase_price: pf.purchase_price.value, supplier_id: pf.supplier_id.value, reorder_qty: pf.reorder_qty.value, tracking: pf.tracking.value });
   $('#skuScan').onclick = () => {
     const d = snap();
     openScanner('Scanner le code-barres du produit', code => productForm(id, { ...d, sku: code }), () => productForm(id, d));
@@ -670,7 +840,7 @@ function productForm(id, draft) {
     const d = snap(), price = parseMoney(d.purchase_price);
     if (d.purchase_price.trim() && price === null) return toast('Prix d’achat invalide.', true);
     const row = { name: d.name.trim(), sku: d.sku.trim() || null, min_stock: parseInt(d.min_stock || '0', 10) || 0,
-      purchase_price: price, supplier_id: d.supplier_id || null, reorder_qty: parseInt(d.reorder_qty || '0', 10) || 0 };
+      purchase_price: price, supplier_id: d.supplier_id || null, reorder_qty: parseInt(d.reorder_qty || '0', 10) || 0, tracking: d.tracking || 'none' };
     const ok = await run(async () => {
       if (p) must(await sb.from('products').update(row).eq('id', p.id));
       else must(await sb.from('products').insert({ ...row, company_id: S.company.id }));
@@ -811,15 +981,15 @@ async function runImport() {
   if (!rows.length) return;
   if (rows.length > 5000) return toast('5000 produits maximum par import.', true);
   const btn = $('#impGo'); btn.disabled = true;
-  let created = 0, updated = 0;
+  let created = 0, updated = 0, skipped = 0;
   const ok = await run(async () => {
     for (let i = 0; i < rows.length; i += 500) {
       btn.textContent = `Import en cours… ${Math.min(i + 500, rows.length)}/${rows.length}`;
       const r = must(await sb.rpc('import_products', { p_company: S.company.id, p_rows: rows.slice(i, i + 500), p_location: $('#impLoc')?.value || defLoc() }));
-      created += r.created; updated += r.updated;
+      created += r.created; updated += r.updated; skipped += r.skipped || 0;
     }
   });
-  if (ok) { toast(`Import terminé : ${created} créé${created > 1 ? 's' : ''}, ${updated} mis à jour`); S.imp = null; closeModal(); await refresh(); }
+  if (ok) { toast(`Import terminé : ${created} créé${created > 1 ? 's' : ''}, ${updated} mis à jour${skipped ? `, ${skipped} quantité(s) ignorée(s) (suivi par n° de série)` : ''}`); S.imp = null; closeModal(); await refresh(); }
   else { btn.disabled = false; btn.textContent = 'Réessayer l’import'; await refresh(); }
 }
 
@@ -861,6 +1031,8 @@ function findByCode(code) {
   return S.allProducts.find(p => (id && p.id === id) || (p.sku && p.sku.toLowerCase() === c.toLowerCase()));
 }
 function onScannedCode(code) {
+  const sn = S.serials.find(x => x.serial.toLowerCase() === String(code).trim().toLowerCase());
+  if (sn && !findByCode(code)) return openProduct(sn.product_id);
   const p = findByCode(code);
   if (p && !p.archived) return openProduct(p.id, true);
   if (p) { toast('Ce produit est archivé.', true); return closeModal(); }
@@ -906,16 +1078,28 @@ function qsHandle(code) { qsQueue = qsQueue.then(() => qsRecord(code)); }
 async function qsRecord(code) {
   const p = findByCode(code), type = S.qs.type, qty = S.qs.qty, loc = S.qs.loc || defLoc();
   const e = { code, at: new Date(), name: p?.name };
-  if (!p || p.archived) { e.err = p ? 'Produit archivé' : 'Code inconnu : ' + code; beep(false); }
+  if (p && p.tracking === 'serial') { e.err = 'Produit suivi par n° de série : scanne le n° de série'; beep(false); }
+  else if (!p) {
+    try {
+      const r = must(await sb.rpc('scan_serial', { p_company: S.company.id, p_serial: code, p_type: type, p_location: loc }));
+      e.name = r.name + ' · n° ' + r.serial; e.after = r.after; e.delta = (type === 'in' ? '+' : '−') + '1'; beep(true);
+    } catch (err) { e.err = isNet(err) ? 'Hors ligne : les n° de série nécessitent le réseau' : (/inconnu/i.test(errMsg(err)) ? 'Code inconnu : ' + code : errMsg(err)); beep(false); }
+  }
+  else if (p.archived) { e.err = 'Produit archivé'; beep(false); }
   else {
     try {
-      e.after = must(await sb.rpc('record_stock_movement', { p_product_id: p.id, p_type: type, p_quantity: qty, p_note: null, p_location_id: loc, p_source: 'scan' }));
-      e.delta = (type === 'in' ? '+' : '−') + qty; p.quantity = e.after; beep(true);
+      if (type === 'out' && S.offline && levelOf(p.id, loc) < qty) throw new Error('Stock insuffisant (hors ligne)');
+      const r = await rpcOff('record_stock_movement', { p_product_id: p.id, p_type: type, p_quantity: qty, p_note: null, p_location_id: loc, p_source: 'scan' },
+        `${type === 'in' ? '+' : '−'}${qty} ${p.name}`, () => localMove(p.id, type, qty, loc));
+      e.after = r.queued ? p.quantity + ' (en attente)' : r.data;
+      e.delta = (type === 'in' ? '+' : '−') + qty; if (!r.queued) p.quantity = r.data;
+      if (p.tracking === 'lot' && type === 'in') e.name = p.name + ' · lot SANS-LOT';
+      beep(true);
     } catch (err) { e.err = errMsg(err); beep(false); }
   }
   S.qs.log.unshift(e); S.qs.log = S.qs.log.slice(0, 30);
   const l = $('#qsLog'); if (l) l.innerHTML = qsLogHtml();
-  clearTimeout(S.qsT); S.qsT = setTimeout(async () => { await run(loadData); render(); }, 1500);
+  clearTimeout(S.qsT); S.qsT = setTimeout(async () => { if (!S.offline) await run(loadData); render(); }, 1500);
 }
 
 let actx;
@@ -979,9 +1163,102 @@ async function printLabels(ids) {
 }
 
 // =====================================================================
+//  PHASE 2 : DLC, mode hors ligne (file d'attente + synchronisation)
+// =====================================================================
+function dlcHtml() {
+  const soon = S.lots.filter(l => l.expiry_date && l.quantity > 0 && daysTo(l.expiry_date) <= 30)
+    .sort((a, b) => a.expiry_date.localeCompare(b.expiry_date));
+  if (!soon.length) return '';
+  const expired = soon.filter(l => daysTo(l.expiry_date) < 0).length;
+  return `<section class="card"><div class="sec-h"><h3>DLC à surveiller</h3><span class="badge warn">${soon.length}</span></div>
+    ${expired ? `<p class="small dlc-x" style="margin-top:0">${expired} lot${expired > 1 ? 's' : ''} périmé${expired > 1 ? 's' : ''}</p>` : ''}
+    <div class="list">${soon.slice(0, 8).map(l => { const p = S.allProducts.find(x => x.id === l.product_id), n = daysTo(l.expiry_date);
+      return `<button class="item" onclick="openProduct('${l.product_id}')"><div class="grow"><div class="t">${esc(p?.name || 'Produit')}</div>
+        <div class="s">Lot ${esc(l.lot_number)} · <span class="${dlcCls(l.expiry_date)}">DLC ${fmtDay(l.expiry_date)}</span>${multiLoc() ? ' · ' + esc(locName(l.location_id)) : ''}</div></div>
+        <div style="text-align:right"><b>${l.quantity}</b><div class="s ${dlcCls(l.expiry_date)}">${n < 0 ? 'Périmé' : n === 0 ? 'Aujourd’hui' : 'J-' + n}</div></div></button>`; }).join('')}</div></section>`;
+}
+
+function isNet(e) { return /Failed to fetch|NetworkError|Load failed|Network request failed|network connection/i.test(String(e?.message || e || '')); }
+const Q = {
+  get() { try { return JSON.parse(localStorage.getItem('sp_queue') || '[]'); } catch { return []; } },
+  set(v) { try { localStorage.setItem('sp_queue', JSON.stringify(v)); } catch {} }
+};
+function failedList() { try { return JSON.parse(ls.get('sp_failed') || '[]'); } catch { return []; } }
+
+// Appel serveur qui, en cas de coupure réseau, met l'opération en file d'attente
+async function rpcOff(name, args, label, applyLocal) {
+  try { return { data: must(await sb.rpc(name, args)) }; }
+  catch (e) {
+    if (!isNet(e)) throw e;
+    const q = Q.get();
+    q.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), name, args, label, company: S.company?.id, at: new Date().toISOString() });
+    Q.set(q);
+    S.offline = true; applyLocal?.(); saveSnapSafe(); updateNetbar();
+    return { queued: true };
+  }
+}
+function saveSnapSafe() { try { if (S.company) saveSnap(); } catch {} }
+function localMove(pid, type, qty, loc) {
+  const p = S.allProducts.find(x => x.id === pid); if (!p) return;
+  const d = type === 'in' ? qty : -qty;
+  p.quantity = Math.max(0, p.quantity + d);
+  let l = S.levels.find(x => x.product_id === pid && x.location_id === loc);
+  if (!l) S.levels.push(l = { product_id: pid, location_id: loc, quantity: 0 });
+  l.quantity = Math.max(0, l.quantity + d);
+  S.moves.unshift({ id: 'q' + Date.now(), product_id: pid, type, quantity: qty, quantity_after: p.quantity, note: 'En attente de synchronisation',
+    location_id: loc, user_id: S.user.id, created_at: new Date().toISOString(), source: 'manual' });
+}
+
+let syncing = false;
+function netbarHtml() {
+  const n = Q.get().length, f = failedList().length;
+  if (syncing) return `<div class="netbar sync">Synchronisation en cours…</div>`;
+  if (S.offline) return `<div class="netbar">Hors ligne${n ? ` · ${n} opération${n > 1 ? 's' : ''} en attente` : ' · données du dernier chargement'} <button onclick="flushQueue(true)">Réessayer</button></div>`;
+  if (n) return `<div class="netbar sync">${n} opération${n > 1 ? 's' : ''} en attente <button onclick="flushQueue(true)">Synchroniser</button></div>`;
+  if (f) return `<div class="netbar">${f} opération${f > 1 ? 's' : ''} hors ligne refusée${f > 1 ? 's' : ''} <button onclick="showFailed()">Voir</button></div>`;
+  return '';
+}
+function updateNetbar() { const b = $('#netbar'); if (b) b.innerHTML = netbarHtml(); }
+
+async function flushQueue(manual) {
+  if (syncing || !sb || !S.user) return;
+  if (!Q.get().length) {
+    if (S.offline && manual) { await refresh(); if (!S.offline) toast('Connexion rétablie'); }
+    return;
+  }
+  syncing = true; updateNetbar();
+  let done = 0; const failed = [];
+  while (true) {
+    const it = Q.get()[0]; if (!it) break;
+    try { must(await sb.rpc(it.name, it.args)); done++; }
+    catch (e) {
+      if (isNet(e)) { syncing = false; S.offline = true; updateNetbar(); if (manual) toast('Toujours hors ligne.', true); return; }
+      failed.push({ ...it, error: errMsg(e) });
+    }
+    Q.set(Q.get().filter(x => x.id !== it.id));
+  }
+  syncing = false; S.offline = false;
+  if (failed.length) ls.set('sp_failed', JSON.stringify(failedList().concat(failed).slice(-50)));
+  toast(`Synchronisation : ${done} opération${done > 1 ? 's' : ''} envoyée${done > 1 ? 's' : ''}${failed.length ? `, ${failed.length} refusée${failed.length > 1 ? 's' : ''}` : ''}`, !!failed.length);
+  await refresh();
+}
+function showFailed() {
+  const f = failedList();
+  openModal(`<div class="sec-h"><h3>Opérations refusées</h3><button class="icon-btn" onclick="closeModal()">✕</button></div>
+    <p class="muted small">Ces opérations faites hors ligne ont été refusées à la synchronisation (stock insuffisant, inventaire clôturé…). Refais-les si besoin.</p>
+    <div class="list">${f.map(x => `<div class="item col"><div class="t">${esc(x.label || x.name)}</div><div class="s">${fmtDate(x.at)} · <span class="err">${esc(x.error)}</span></div></div>`).join('')}</div>
+    <button class="btn ghost" onclick="ls.set('sp_failed','[]');closeModal();render()">Effacer la liste</button>`);
+}
+window.addEventListener('online', () => flushQueue());
+window.addEventListener('offline', () => { S.offline = true; updateNetbar(); });
+setInterval(() => { if (Q.get().length && navigator.onLine) flushQueue(); }, 30000);
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+
+// =====================================================================
 //  PHASE 1 : Plus, emplacements, fournisseurs, commandes, inventaire,
 //  statistiques, journal d'activité
 // =====================================================================
+function saveInvSnap() { ls.set('sp_inv_' + S.company.id, JSON.stringify({ invs: S.invs, invCounts: S.invCounts })); }
 const LOADERS = {
   orders: async () => {
     S.pos = must(await sb.from('purchase_orders').select('*').eq('company_id', S.company.id).order('number', { ascending: false }).limit(100));
@@ -989,10 +1266,12 @@ const LOADERS = {
     S.poLines = ids.length ? must(await sb.from('purchase_order_lines').select('*').in('po_id', ids)) : [];
   },
   inventory: async () => {
+    if (S.offline) { try { Object.assign(S, JSON.parse(ls.get('sp_inv_' + S.company.id) || '{}')); } catch {} return; }
     S.invs = must(await sb.from('inventories').select('*').eq('company_id', S.company.id).order('created_at', { ascending: false }).limit(50));
     const open = S.invs.filter(i => i.status === 'open').map(i => i.id);
     S.invCounts = open.length ? must(await sb.from('inventory_counts').select('*').in('inventory_id', open)) : [];
     if (S.inv && !S.invs.some(i => i.id === S.inv && i.status === 'open')) S.inv = null;
+    saveInvSnap();
   },
   stats: async () => { S.stats = must(await sb.rpc('product_stats', { p_company: S.company.id, p_days: S.statsDays })) || []; },
   audit: async () => {
@@ -1214,11 +1493,19 @@ function poReceive(id) {
   openModal(`<div class="sec-h"><h3>Réception n° ${o.number}</h3><button class="icon-btn" onclick="poView('${id}')">✕</button></div>
     <p class="muted small">Saisis les quantités réellement reçues. Elles entrent en stock immédiatement.</p>
     <form id="rf">${multiLoc() ? `<label>Ranger dans${locSelect('loc', S.loc || defLoc())}</label>` : ''}
-    ${lines.map(l => { const p = S.allProducts.find(p => p.id === l.product_id); return `<label>${esc(p?.name || 'Produit')} <span class="muted">(reste ${l.quantity - l.received})</span><input name="q_${l.id}" type="number" min="0" inputmode="numeric" value="${l.quantity - l.received}"></label>`; }).join('')}
+    ${lines.map(l => { const p = S.allProducts.find(p => p.id === l.product_id), rest = l.quantity - l.received;
+      const head = `<div class="t" style="margin-top:12px">${esc(p?.name || 'Produit')} <span class="muted">(reste ${rest})</span></div>`;
+      if (p?.tracking === 'serial') return head + `<label>N° de série reçus (un par ligne)<textarea name="s_${l.id}" rows="3" autocapitalize="characters" spellcheck="false"></textarea></label>`;
+      return head + `<label>Quantité reçue<input name="q_${l.id}" type="number" min="0" inputmode="numeric" value="${rest}"></label>` +
+        (p?.tracking === 'lot' ? `<div class="grid2"><label>N° de lot<input name="l_${l.id}" maxlength="100" autocapitalize="characters"></label><label>DLC<input name="e_${l.id}" type="date"></label></div>` : '');
+    }).join('')}
     <button class="btn primary">Valider la réception</button></form>`);
   $('#rf').onsubmit = async e => {
     e.preventDefault();
-    const f = e.target, payload = lines.map(l => ({ line_id: l.id, qty: Math.max(0, parseInt(f['q_' + l.id].value, 10) || 0) })).filter(x => x.qty > 0);
+    const f = e.target, payload = lines.map(l => {
+      if (f['s_' + l.id]) { const sn = splitSerials(f['s_' + l.id].value); return { line_id: l.id, qty: sn.length, serials: sn }; }
+      return { line_id: l.id, qty: Math.max(0, parseInt(f['q_' + l.id].value, 10) || 0), lot: f['l_' + l.id]?.value.trim() || null, expiry: f['e_' + l.id]?.value || null };
+    }).filter(x => x.qty > 0);
     if (!payload.length) return toast('Aucune quantité saisie.', true);
     let st;
     if (await run(async () => { st = must(await sb.rpc('receive_purchase_order', { p_po: id, p_location: f.loc?.value || defLoc(), p_lines: payload })); },
@@ -1277,7 +1564,10 @@ function invCountView() {
     <button class="btn danger ghost" onclick="invCancel()">Annuler l’inventaire</button>`;
 }
 async function invCount(pid, qty, add) {
-  const n = must(await sb.rpc('count_inventory', { p_inventory: S.inv, p_product: pid, p_qty: qty, p_add: add }));
+  const cur = S.invCounts.find(x => x.inventory_id === S.inv && x.product_id === pid);
+  const r = await rpcOff('count_inventory', { p_inventory: S.inv, p_product: pid, p_qty: qty, p_add: add }, 'Comptage inventaire');
+  const n = r.queued ? Math.max(0, add ? (cur?.counted || 0) + qty : qty) : r.data;
+  if (r.queued) saveInvSnap();
   const c = S.invCounts.find(x => x.inventory_id === S.inv && x.product_id === pid);
   if (c) c.counted = n; else S.invCounts.push({ inventory_id: S.inv, product_id: pid, counted: n });
   return n;
@@ -1302,7 +1592,7 @@ async function invClose() {
   if (!confirm(`Valider l’inventaire et corriger le stock ?${zero ? '\nLes produits non comptés seront mis à 0.' : ''}`)) return;
   let r;
   if (await run(async () => { r = must(await sb.rpc('close_inventory', { p_inventory: S.inv, p_zero_missing: !!zero })); })) {
-    toast(`Inventaire validé : ${r.adjusted} correction${r.adjusted > 1 ? 's' : ''}`); S.inv = null; refresh();
+    toast(`Inventaire validé : ${r.adjusted} correction${r.adjusted > 1 ? 's' : ''}${r.skipped ? ` · ${r.skipped} produit(s) suivi(s) par n° de série à ajuster à la main` : ''}`); S.inv = null; refresh();
   }
 }
 async function invCancel() {
